@@ -1,5 +1,18 @@
-frontend/node_modules
-backend/venv
+# macOS trash
+.DS_Store
+*/.DS_Store
+
+# Python virtual environment
+backend/.venv/
+venv/
+
+# Python bytecode
 __pycache__/
-*.pyc
+*/__pycache__/
+*.py[cod]
+
+# Node modules
+frontend/node_modules/
+
+# Env files
 .env
