@@ -1,170 +1,66 @@
-import React, { useEffect, useState } from "react";
-
-const API_BASE = "http://127.0.0.1:8000";
+import React from "react";
+import { Routes, Route, Navigate } from "react-router-dom";
+import Sidebar from "./layout/Sidebar";
+import Topbar from "./layout/Topbar";
+import HomePage from "./pages/Home";
+import AssignmentsPage from "./pages/Assignments";
+import AssignmentDetailPage from "./pages/AssignmentDetail";
+import InvoicesPage from "./pages/Invoices";
+import SettingsPage from "./pages/Settings";
 
 function App() {
-  const [assignments, setAssignments] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState({
-    case_type: "BANK",
-    bank_name: "",
-    branch_name: "",
-    borrower_name: "",
-    status: "SITE_VISIT",
-  });
-
-  const fetchAssignments = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/assignments/`);
-      const data = await res.json();
-      setAssignments(data);
-    } catch (err) {
-      console.error("Failed to fetch assignments", err);
-    } finally {
-      setLoading(false);
-    }
+  const shellStyle = {
+    display: "flex",
+    minHeight: "100vh",
+    fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
   };
 
-  useEffect(() => {
-    fetchAssignments();
-  }, []);
-
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
+  const sidebarWrapperStyle = {
+    width: "220px",
+    borderRight: "1px solid #ddd",
+    backgroundColor: "#f7f7f7",
   };
 
-  const handleCreate = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await fetch(`${API_BASE}/api/assignments/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
-      });
-
-      console.log("Create response status:", res.status);
-      
-      if (!res.ok) {
-        const err = await res.json();
-        alert(`Error: ${err.detail || res.statusText}`);
-        return;
-      }
-      setForm({
-        case_type: "BANK",
-        bank_name: "",
-        branch_name: "",
-        borrower_name: "",
-        status: "SITE_VISIT",
-      });
-      fetchAssignments();
-    } catch (err) {
-      console.error("Failed to create assignment", err);
-    }
+  const mainWrapperStyle = {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
   };
 
-  const updateStatus = async (id, status) => {
-    try {
-      await fetch(`${API_BASE}/api/assignments/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      fetchAssignments();
-    } catch (err) {
-      console.error("Failed to update status", err);
-    }
+  const mainContentStyle = {
+    flex: 1,
+    padding: "1.5rem",
+    backgroundColor: "#fafafa",
+    overflow: "auto",
   };
 
   return (
-    <div style={{ padding: "1.5rem", fontFamily: "system-ui, sans-serif" }}>
-      <h1>Zen Ops – Assignments</h1>
+    <div style={shellStyle}>
+      <aside style={sidebarWrapperStyle}>
+        <Sidebar />
+      </aside>
 
-      <section style={{ marginBottom: "2rem" }}>
-        <h2>Create Assignment</h2>
-        <form onSubmit={handleCreate} style={{ display: "grid", gap: "0.5rem", maxWidth: "400px" }}>
-          <select name="case_type" value={form.case_type} onChange={handleChange}>
-            <option value="BANK">BANK</option>
-            <option value="EXTERNAL_VALUER">EXTERNAL VALUER</option>
-            <option value="DIRECT_CLIENT">DIRECT CLIENT</option>
-          </select>
-          <input
-            name="bank_name"
-            placeholder="Bank Name"
-            value={form.bank_name}
-            onChange={handleChange}
-          />
-          <input
-            name="branch_name"
-            placeholder="Branch Name"
-            value={form.branch_name}
-            onChange={handleChange}
-          />
-          <input
-            name="borrower_name"
-            placeholder="Borrower / Client"
-            value={form.borrower_name}
-            onChange={handleChange}
-          />
-          <select name="status" value={form.status} onChange={handleChange}>
-            <option value="SITE_VISIT">SITE_VISIT</option>
-            <option value="IN_PROGRESS">IN_PROGRESS</option>
-            <option value="FINAL_CHECK">FINAL_CHECK</option>
-            <option value="COMPLETED">COMPLETED</option>
-            <option value="PAID">PAID</option>
-          </select>
-          <button type="submit">Save</button>
-        </form>
-      </section>
+      <div style={mainWrapperStyle}>
+        <Topbar />
+        <main style={mainContentStyle}>
+          <Routes>
+            <Route path="/" element={<Navigate to="/home" replace />} />
+            <Route path="/home" element={<HomePage />} />
 
-      <section>
-        <h2>Assignments</h2>
-        {loading ? (
-          <p>Loading…</p>
-        ) : (
-          <table border="1" cellPadding="6" style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Code</th>
-                <th>Case</th>
-                <th>Bank / Client</th>
-                <th>Status</th>
-                <th>Change Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {assignments.map((a) => (
-                <tr key={a.id}>
-                  <td>{a.id}</td>
-                  <td>{a.assignment_code}</td>
-                  <td>{a.case_type}</td>
-                  <td>{a.bank_name || a.valuer_client_name || "-"}</td>
-                  <td>{a.status}</td>
-                  <td>
-                    <select
-                      value={a.status}
-                      onChange={(e) => updateStatus(a.id, e.target.value)}
-                    >
-                      <option value="SITE_VISIT">SITE_VISIT</option>
-                      <option value="IN_PROGRESS">IN_PROGRESS</option>
-                      <option value="FINAL_CHECK">FINAL_CHECK</option>
-                      <option value="COMPLETED">COMPLETED</option>
-                      <option value="PAID">PAID</option>
-                    </select>
-                  </td>
-                </tr>
-              ))}
-              {assignments.length === 0 && !loading && (
-                <tr>
-                  <td colSpan="6">No assignments yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        )}
-      </section>
+            <Route path="/assignments" element={<AssignmentsPage />} />
+            <Route
+              path="/assignments/:id"
+              element={<AssignmentDetailPage />}
+            />
+
+            <Route path="/invoices" element={<InvoicesPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+
+            {/* fallback */}
+            <Route path="*" element={<Navigate to="/home" replace />} />
+          </Routes>
+        </main>
+      </div>
     </div>
   );
 }
