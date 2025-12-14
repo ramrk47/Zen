@@ -1,7 +1,37 @@
+// src/pages/AssignmentDetail.jsx
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { currentUser } from "../auth/currentUser";
 
 const API_BASE = "http://127.0.0.1:8000";
+
+const STATUS_OPTIONS = [
+  "PENDING",
+  "SITE_VISIT",
+  "UNDER_PROCESS",
+  "SUBMITTED",
+  "COMPLETED",
+  "CANCELLED",
+];
+
+function formatStatus(status) {
+  switch (status) {
+    case "PENDING":
+      return "Pending";
+    case "SITE_VISIT":
+      return "Site Visit";
+    case "UNDER_PROCESS":
+      return "Under Process";
+    case "SUBMITTED":
+      return "Submitted";
+    case "COMPLETED":
+      return "Completed";
+    case "CANCELLED":
+      return "Cancelled";
+    default:
+      return status || "-";
+  }
+}
 
 function formatDate(value) {
   if (!value) return "-";
@@ -16,9 +46,18 @@ function formatDate(value) {
 function AssignmentDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const isAdmin = currentUser.role === "ADMIN";
+
   const [assignment, setAssignment] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // form state
+  const [formStatus, setFormStatus] = useState("");
+  const [formFees, setFormFees] = useState("");
+  const [formIsPaid, setFormIsPaid] = useState(false);
+  const [formNotes, setFormNotes] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const fetchAssignment = async () => {
     setLoading(true);
@@ -35,6 +74,12 @@ function AssignmentDetailPage() {
       }
       const data = await res.json();
       setAssignment(data);
+
+      // seed form
+      setFormStatus(data.status || "");
+      setFormFees(data.fees ?? "");
+      setFormIsPaid(!!data.is_paid);
+      setFormNotes(data.notes || "");
     } catch (err) {
       console.error("Failed to fetch assignment detail", err);
       setError("Failed to load assignment.");
@@ -45,10 +90,55 @@ function AssignmentDetailPage() {
 
   useEffect(() => {
     fetchAssignment();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  const handleSave = async () => {
+    if (!assignment) return;
+    setSaving(true);
+    setError("");
+
+    try {
+      const payload = {
+        status: formStatus || assignment.status,
+        notes: formNotes,
+      };
+
+      if (isAdmin) {
+        payload.fees =
+          formFees === "" || formFees === null ? 0 : Number(formFees);
+        payload.is_paid = formIsPaid;
+      }
+
+      const res = await fetch(`${API_BASE}/api/assignments/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        console.error("Save failed", res.status);
+        setError("Failed to save changes.");
+        return;
+      }
+
+      const updated = await res.json();
+      setAssignment(updated);
+      // sync form with server copy
+      setFormStatus(updated.status || "");
+      setFormFees(updated.fees ?? "");
+      setFormIsPaid(!!updated.is_paid);
+      setFormNotes(updated.notes || "");
+    } catch (err) {
+      console.error("Error saving assignment", err);
+      setError("Failed to save changes.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const containerStyle = {
-    maxWidth: "800px",
+    maxWidth: "900px",
     margin: "0 auto",
   };
 
@@ -79,6 +169,25 @@ function AssignmentDetailPage() {
     gap: "0.75rem 1.5rem",
   };
 
+  const inputStyle = {
+    width: "100%",
+    padding: "0.35rem 0.5rem",
+    fontSize: "0.9rem",
+    borderRadius: "4px",
+    border: "1px solid #d1d5db",
+    boxSizing: "border-box",
+  };
+
+  const selectStyle = {
+    ...inputStyle,
+  };
+
+  const textareaStyle = {
+    ...inputStyle,
+    minHeight: "80px",
+    resize: "vertical",
+  };
+
   return (
     <div style={containerStyle}>
       <button
@@ -105,7 +214,7 @@ function AssignmentDetailPage() {
 
       {assignment && (
         <>
-          {/* Summary */}
+          {/* SUMMARY */}
           <section style={sectionStyle}>
             <div style={{ marginBottom: "0.75rem" }}>
               <div style={labelStyle}>Assignment Code</div>
@@ -120,27 +229,127 @@ function AssignmentDetailPage() {
                 <div style={valueStyle}>{assignment.case_type}</div>
               </div>
               <div>
-                <div style={labelStyle}>Status</div>
-                <div style={valueStyle}>{assignment.status}</div>
+                <div style={labelStyle}>Current Status</div>
+                <div style={valueStyle}>{formatStatus(assignment.status)}</div>
               </div>
-              <div>
-                <div style={labelStyle}>Fees (₹)</div>
-                <div style={valueStyle}>{assignment.fees ?? 0}</div>
-              </div>
-              <div>
-                <div style={labelStyle}>Paid?</div>
-                <div style={valueStyle}>
-                  {assignment.is_paid ? "Yes" : "No"}
+
+              {isAdmin && (
+                <div>
+                  <div style={labelStyle}>Fees (₹)</div>
+                  <div style={valueStyle}>{assignment.fees ?? 0}</div>
                 </div>
-              </div>
+              )}
+              {isAdmin && (
+                <div>
+                  <div style={labelStyle}>Paid?</div>
+                  <div style={valueStyle}>
+                    {assignment.is_paid ? "Yes" : "No"}
+                  </div>
+                </div>
+              )}
             </div>
           </section>
 
-          {/* Parties */}
+          {/* EDIT SECTION */}
           <section style={sectionStyle}>
             <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>
-              Parties
+              Update Assignment
             </h2>
+
+            <p
+              style={{
+                fontSize: "0.8rem",
+                color: "#6b7280",
+                marginBottom: "0.75rem",
+              }}
+            >
+              {isAdmin
+                ? "Admins can update status, fees, payment status and notes."
+                : "Employees can update status and notes. Financial fields are hidden."}
+            </p>
+
+            <div style={twoColGrid}>
+              <div>
+                <div style={labelStyle}>Status</div>
+                <select
+                  style={selectStyle}
+                  value={formStatus}
+                  onChange={(e) => setFormStatus(e.target.value)}
+                >
+                  {STATUS_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {formatStatus(s)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {isAdmin && (
+                <>
+                  <div>
+                    <div style={labelStyle}>Fees (₹)</div>
+                    <input
+                      type="number"
+                      style={inputStyle}
+                      value={formFees}
+                      onChange={(e) => setFormFees(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Paid?</div>
+                    <label
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "0.4rem",
+                        fontSize: "0.9rem",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={formIsPaid}
+                        onChange={(e) => setFormIsPaid(e.target.checked)}
+                      />
+                      Mark as paid
+                    </label>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div style={{ marginTop: "0.75rem" }}>
+              <div style={labelStyle}>Notes</div>
+              <textarea
+                style={textareaStyle}
+                value={formNotes}
+                onChange={(e) => setFormNotes(e.target.value)}
+                placeholder="Internal notes about this assignment…"
+              />
+            </div>
+
+            <div style={{ marginTop: "0.75rem" }}>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving}
+                style={{
+                  padding: "0.45rem 0.9rem",
+                  fontSize: "0.9rem",
+                  borderRadius: "4px",
+                  border: "none",
+                  backgroundColor: saving ? "#9ca3af" : "#2563eb",
+                  color: "#ffffff",
+                  cursor: saving ? "default" : "pointer",
+                }}
+              >
+                {saving ? "Saving…" : "Save Changes"}
+              </button>
+            </div>
+          </section>
+
+          {/* PARTIES */}
+          <section style={sectionStyle}>
+            <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>Parties</h2>
             <div style={twoColGrid}>
               <div>
                 <div style={labelStyle}>Bank Name / Client</div>
@@ -165,7 +374,7 @@ function AssignmentDetailPage() {
             </div>
           </section>
 
-          {/* Property */}
+          {/* PROPERTY */}
           <section style={sectionStyle}>
             <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>
               Property
@@ -177,9 +386,7 @@ function AssignmentDetailPage() {
               </div>
               <div>
                 <div style={labelStyle}>Property Type</div>
-                <div style={valueStyle}>
-                  {assignment.property_type || "-"}
-                </div>
+                <div style={valueStyle}>{assignment.property_type || "-"}</div>
               </div>
               <div>
                 <div style={labelStyle}>Land Area</div>
@@ -192,7 +399,7 @@ function AssignmentDetailPage() {
             </div>
           </section>
 
-          {/* Dates & meta */}
+          {/* TIMELINE */}
           <section style={sectionStyle}>
             <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>
               Timeline
@@ -212,32 +419,12 @@ function AssignmentDetailPage() {
               </div>
               <div>
                 <div style={labelStyle}>Created At</div>
-                <div style={valueStyle}>
-                  {formatDate(assignment.created_at)}
-                </div>
+                <div style={valueStyle}>{formatDate(assignment.created_at)}</div>
               </div>
               <div>
                 <div style={labelStyle}>Updated At</div>
-                <div style={valueStyle}>
-                  {formatDate(assignment.updated_at)}
-                </div>
+                <div style={valueStyle}>{formatDate(assignment.updated_at)}</div>
               </div>
-            </div>
-          </section>
-
-          {/* Notes */}
-          <section style={sectionStyle}>
-            <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>
-              Notes
-            </h2>
-            <div
-              style={{
-                fontSize: "0.95rem",
-                whiteSpace: "pre-wrap",
-                minHeight: "2rem",
-              }}
-            >
-              {assignment.notes || "No notes added."}
             </div>
           </section>
         </>
