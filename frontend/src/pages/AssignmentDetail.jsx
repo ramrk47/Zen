@@ -1,7 +1,7 @@
 // src/pages/AssignmentDetail.jsx
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { currentUser } from "../auth/currentUser";
+import { getCurrentUser } from "../auth/currentUser";
 
 const API_BASE = "http://127.0.0.1:8000";
 
@@ -46,7 +46,10 @@ function formatDate(value) {
 function AssignmentDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const isAdmin = currentUser.role === "ADMIN";
+
+  const user = getCurrentUser();
+  const userEmail = (user?.email || "").trim();
+  const isAdmin = (user?.role || "").toUpperCase() === "ADMIN";
 
   const [assignment, setAssignment] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -59,19 +62,33 @@ function AssignmentDetailPage() {
   const [formNotes, setFormNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const authedFetch = async (url, opts = {}) => {
+    if (!userEmail) throw new Error("Missing user identity");
+    const headers = {
+      ...(opts.headers || {}),
+      "X-User-Email": userEmail,
+    };
+    return fetch(url, { ...opts, headers });
+  };
+
   const fetchAssignment = async () => {
     setLoading(true);
     setError("");
+
+    if (!userEmail) {
+      setLoading(false);
+      setError("Missing user identity. Please login again.");
+      return;
+    }
+
     try {
-      const res = await fetch(`${API_BASE}/api/assignments/${id}`);
+      const res = await authedFetch(`${API_BASE}/api/assignments/${id}`);
       if (!res.ok) {
-        if (res.status === 404) {
-          setError("Assignment not found.");
-        } else {
-          setError(`Error: ${res.status}`);
-        }
+        if (res.status === 404) setError("Assignment not found.");
+        else setError(`Error: ${res.status}`);
         return;
       }
+
       const data = await res.json();
       setAssignment(data);
 
@@ -82,7 +99,11 @@ function AssignmentDetailPage() {
       setFormNotes(data.notes || "");
     } catch (err) {
       console.error("Failed to fetch assignment detail", err);
-      setError("Failed to load assignment.");
+      setError(
+        err?.message === "Missing user identity"
+          ? "Missing user identity. Please login again."
+          : "Failed to load assignment."
+      );
     } finally {
       setLoading(false);
     }
@@ -91,10 +112,16 @@ function AssignmentDetailPage() {
   useEffect(() => {
     fetchAssignment();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, userEmail]);
 
   const handleSave = async () => {
     if (!assignment) return;
+
+    if (!userEmail) {
+      setError("Missing user identity. Please login again.");
+      return;
+    }
+
     setSaving(true);
     setError("");
 
@@ -104,13 +131,13 @@ function AssignmentDetailPage() {
         notes: formNotes,
       };
 
+      // ADMIN ONLY: money fields
       if (isAdmin) {
-        payload.fees =
-          formFees === "" || formFees === null ? 0 : Number(formFees);
+        payload.fees = formFees === "" || formFees === null ? 0 : Number(formFees);
         payload.is_paid = formIsPaid;
       }
 
-      const res = await fetch(`${API_BASE}/api/assignments/${id}`, {
+      const res = await authedFetch(`${API_BASE}/api/assignments/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -118,12 +145,15 @@ function AssignmentDetailPage() {
 
       if (!res.ok) {
         console.error("Save failed", res.status);
-        setError("Failed to save changes.");
+        const text = await res.text();
+        console.error("Response body:", text);
+        setError("Failed to save changes. Check console for backend message.");
         return;
       }
 
       const updated = await res.json();
       setAssignment(updated);
+
       // sync form with server copy
       setFormStatus(updated.status || "");
       setFormFees(updated.fees ?? "");
@@ -178,15 +208,8 @@ function AssignmentDetailPage() {
     boxSizing: "border-box",
   };
 
-  const selectStyle = {
-    ...inputStyle,
-  };
-
-  const textareaStyle = {
-    ...inputStyle,
-    minHeight: "80px",
-    resize: "vertical",
-  };
+  const selectStyle = { ...inputStyle };
+  const textareaStyle = { ...inputStyle, minHeight: "80px", resize: "vertical" };
 
   return (
     <div style={containerStyle}>
@@ -207,6 +230,21 @@ function AssignmentDetailPage() {
       </button>
 
       <h1 style={{ marginBottom: "0.75rem" }}>Assignment Detail</h1>
+
+      {!userEmail && (
+        <div
+          style={{
+            ...sectionStyle,
+            borderColor: "#fca5a5",
+            backgroundColor: "#fff1f2",
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: "0.25rem" }}>Not logged in</div>
+          <div style={{ fontSize: "0.85rem", color: "#7f1d1d" }}>
+            Missing user identity. Please login again.
+          </div>
+        </div>
+      )}
 
       {loading && <p>Loading assignment…</p>}
       {error && <p style={{ color: "red" }}>{error}</p>}
@@ -242,9 +280,7 @@ function AssignmentDetailPage() {
               {isAdmin && (
                 <div>
                   <div style={labelStyle}>Paid?</div>
-                  <div style={valueStyle}>
-                    {assignment.is_paid ? "Yes" : "No"}
-                  </div>
+                  <div style={valueStyle}>{assignment.is_paid ? "Yes" : "No"}</div>
                 </div>
               )}
             </div>
@@ -275,6 +311,7 @@ function AssignmentDetailPage() {
                   style={selectStyle}
                   value={formStatus}
                   onChange={(e) => setFormStatus(e.target.value)}
+                  disabled={!userEmail}
                 >
                   {STATUS_OPTIONS.map((s) => (
                     <option key={s} value={s}>
@@ -293,6 +330,7 @@ function AssignmentDetailPage() {
                       style={inputStyle}
                       value={formFees}
                       onChange={(e) => setFormFees(e.target.value)}
+                      disabled={!userEmail}
                     />
                   </div>
                   <div>
@@ -309,6 +347,7 @@ function AssignmentDetailPage() {
                         type="checkbox"
                         checked={formIsPaid}
                         onChange={(e) => setFormIsPaid(e.target.checked)}
+                        disabled={!userEmail}
                       />
                       Mark as paid
                     </label>
@@ -324,6 +363,7 @@ function AssignmentDetailPage() {
                 value={formNotes}
                 onChange={(e) => setFormNotes(e.target.value)}
                 placeholder="Internal notes about this assignment…"
+                disabled={!userEmail}
               />
             </div>
 
@@ -331,7 +371,7 @@ function AssignmentDetailPage() {
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={saving}
+                disabled={saving || !userEmail}
                 style={{
                   padding: "0.45rem 0.9rem",
                   fontSize: "0.9rem",
@@ -354,9 +394,7 @@ function AssignmentDetailPage() {
               <div>
                 <div style={labelStyle}>Bank Name / Client</div>
                 <div style={valueStyle}>
-                  {assignment.bank_name ||
-                    assignment.valuer_client_name ||
-                    "-"}
+                  {assignment.bank_name || assignment.valuer_client_name || "-"}
                 </div>
               </div>
               <div>
@@ -376,9 +414,7 @@ function AssignmentDetailPage() {
 
           {/* PROPERTY */}
           <section style={sectionStyle}>
-            <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>
-              Property
-            </h2>
+            <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>Property</h2>
             <div style={twoColGrid}>
               <div>
                 <div style={labelStyle}>Address</div>
@@ -401,21 +437,15 @@ function AssignmentDetailPage() {
 
           {/* TIMELINE */}
           <section style={sectionStyle}>
-            <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>
-              Timeline
-            </h2>
+            <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>Timeline</h2>
             <div style={twoColGrid}>
               <div>
                 <div style={labelStyle}>Site Visit Date</div>
-                <div style={valueStyle}>
-                  {formatDate(assignment.site_visit_date)}
-                </div>
+                <div style={valueStyle}>{formatDate(assignment.site_visit_date)}</div>
               </div>
               <div>
                 <div style={labelStyle}>Report Due Date</div>
-                <div style={valueStyle}>
-                  {formatDate(assignment.report_due_date)}
-                </div>
+                <div style={valueStyle}>{formatDate(assignment.report_due_date)}</div>
               </div>
               <div>
                 <div style={labelStyle}>Created At</div>

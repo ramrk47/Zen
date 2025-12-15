@@ -21,8 +21,10 @@ function formatStatus(status) {
 
 function HomePage() {
   const navigate = useNavigate();
+
   const user = getCurrentUser();
-  const isAdmin = user?.role === "ADMIN";
+  const userEmail = (user?.email || "").trim();
+  const isAdmin = (user?.role || "").toUpperCase() === "ADMIN";
 
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -31,11 +33,34 @@ function HomePage() {
   const fetchAssignments = async () => {
     setLoading(true);
     setError("");
+
+    if (!userEmail) {
+      setLoading(false);
+      setError("Missing user identity. Please login again.");
+      return;
+    }
+
     try {
-      const res = await fetch(`${API_BASE}/api/assignments/`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const res = await fetch(`${API_BASE}/api/assignments/`, {
+        headers: {
+          "X-User-Email": userEmail,
+        },
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        // Show the real status so debugging is instant.
+        throw new Error(`HTTP ${res.status} ${text ? `- ${text}` : ""}`);
+      }
+
       const data = await res.json();
-      const sorted = [...data].sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
+      const arr = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.assignments)
+          ? data.assignments
+          : [];
+
+      const sorted = [...arr].sort((a, b) => (b?.id ?? 0) - (a?.id ?? 0));
       setAssignments(sorted);
     } catch (err) {
       console.error("Failed to fetch assignments for dashboard", err);
@@ -47,16 +72,14 @@ function HomePage() {
 
   useEffect(() => {
     fetchAssignments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const aggregates = useMemo(() => {
     const totalAssignments = assignments.length;
 
     const activeAssignments = assignments.filter(
-      (a) =>
-        a.status !== "COMPLETED" &&
-        a.status !== "PAID" &&
-        a.status !== "CANCELLED"
+      (a) => a.status !== "COMPLETED" && a.status !== "PAID" && a.status !== "CANCELLED"
     );
 
     const byStatus = assignments.reduce((acc, a) => {
@@ -65,7 +88,6 @@ function HomePage() {
       return acc;
     }, {});
 
-    // Admin-only finance aggregates
     const totalFees = assignments.reduce((sum, a) => sum + (a.fees ?? 0), 0);
     const collectedFees = assignments
       .filter((a) => a.is_paid)
@@ -166,11 +188,24 @@ function HomePage() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: "1rem" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-end",
+          gap: "1rem",
+        }}
+      >
         <div>
           <h1 style={{ marginBottom: "0.25rem" }}>Home</h1>
           <div style={subtleTextStyle}>
-            Welcome{user?.full_name ? `, ${user.full_name}` : user?.email ? `, ${user.email}` : ""}.
+            Welcome
+            {user?.full_name
+              ? `, ${user.full_name}`
+              : user?.email
+                ? `, ${user.email}`
+                : ""}
+            .
           </div>
         </div>
         <button
@@ -217,23 +252,36 @@ function HomePage() {
           <>
             <div style={cardStyle}>
               <div style={cardTitleStyle}>Total Fees Billed (₹)</div>
-              <div style={cardValueStyle}>{(aggregates.totalFees || 0).toLocaleString("en-IN")}</div>
+              <div style={cardValueStyle}>
+                {(aggregates.totalFees || 0).toLocaleString("en-IN")}
+              </div>
             </div>
 
             <div style={cardStyle}>
               <div style={cardTitleStyle}>Pending Fees (₹)</div>
-              <div style={cardValueStyle}>{(aggregates.pendingFees || 0).toLocaleString("en-IN")}</div>
+              <div style={cardValueStyle}>
+                {(aggregates.pendingFees || 0).toLocaleString("en-IN")}
+              </div>
             </div>
 
             <div style={cardStyle}>
               <div style={cardTitleStyle}>Collected Fees (₹)</div>
-              <div style={cardValueStyle}>{(aggregates.collectedFees || 0).toLocaleString("en-IN")}</div>
+              <div style={cardValueStyle}>
+                {(aggregates.collectedFees || 0).toLocaleString("en-IN")}
+              </div>
             </div>
           </>
         )}
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.5rem" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginTop: "0.5rem",
+        }}
+      >
         <h2 style={{ margin: 0 }}>Recent Assignments</h2>
         <button
           type="button"
@@ -255,7 +303,9 @@ function HomePage() {
       <div style={tableWrapperStyle}>
         {recentAssignments.length === 0 ? (
           <div style={{ padding: "0.9rem 1rem" }}>
-            <div style={subtleTextStyle}>No assignments yet. Create one to get started.</div>
+            <div style={subtleTextStyle}>
+              No assignments yet. Create one to get started.
+            </div>
           </div>
         ) : (
           <table style={tableStyle}>
@@ -274,19 +324,31 @@ function HomePage() {
             <tbody>
               {recentAssignments.map((a) => (
                 <tr key={a.id}>
-                  <td style={clickableTdStyle} onClick={() => navigate(`/assignments/${a.id}`)}>
+                  <td
+                    style={clickableTdStyle}
+                    onClick={() => navigate(`/assignments/${a.id}`)}
+                  >
                     {a.id}
                   </td>
-                  <td style={clickableTdStyle} onClick={() => navigate(`/assignments/${a.id}`)}>
+                  <td
+                    style={clickableTdStyle}
+                    onClick={() => navigate(`/assignments/${a.id}`)}
+                  >
                     {a.assignment_code}
                   </td>
                   <td style={tdStyle}>{a.case_type || "-"}</td>
-                  <td style={tdStyle}>{a.bank_name || a.valuer_client_name || "-"}</td>
+                  <td style={tdStyle}>
+                    {a.bank_name || a.valuer_client_name || "-"}
+                  </td>
                   <td style={tdStyle}>{a.borrower_name || "-"}</td>
                   <td style={tdStyle}>
                     <span style={statusPillStyle}>{formatStatus(a.status)}</span>
                   </td>
-                  {isAdmin && <td style={tdStyle}>{(a.fees ?? 0).toLocaleString("en-IN")}</td>}
+                  {isAdmin && (
+                    <td style={tdStyle}>
+                      {(a.fees ?? 0).toLocaleString("en-IN")}
+                    </td>
+                  )}
                   {isAdmin && <td style={tdStyle}>{a.is_paid ? "Yes" : "No"}</td>}
                 </tr>
               ))}

@@ -1,14 +1,7 @@
 // src/pages/Assignments.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { currentUser } from "../auth/currentUser";
-
-function prettyStatus(s) {
-  return (s || "")
-    .toLowerCase()
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
+import { getCurrentUser } from "../auth/currentUser";
 
 const API_BASE = "http://127.0.0.1:8000";
 
@@ -30,20 +23,25 @@ const STATUS_LABELS = {
   CANCELLED: "Cancelled",
 };
 
-const CASE_TYPE_OPTIONS = [
-  "ALL",
-  "BANK",
-  "EXTERNAL_VALUER",
-  "DIRECT_CLIENT",
-];
+const CASE_TYPE_OPTIONS = ["ALL", "BANK", "EXTERNAL_VALUER", "DIRECT_CLIENT"];
 
 function formatStatus(status) {
   return STATUS_LABELS[status] || status || "-";
 }
 
+function formatCaseType(caseType) {
+  if (!caseType) return "-";
+  if (caseType === "EXTERNAL_VALUER") return "External Valuer";
+  if (caseType === "DIRECT_CLIENT") return "Direct Client";
+  return caseType;
+}
+
 function AssignmentsPage() {
-  const isAdmin = currentUser.role === "ADMIN";
   const navigate = useNavigate();
+
+  const user = getCurrentUser();
+  const userEmail = (user?.email || "").trim();
+  const isAdmin = (user?.role || "").toUpperCase() === "ADMIN";
 
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -57,12 +55,23 @@ function AssignmentsPage() {
   const fetchAssignments = async () => {
     setLoading(true);
     setError("");
+
+    if (!userEmail) {
+      setLoading(false);
+      setError("Missing user identity. Please login again.");
+      return;
+    }
+
     try {
-      const res = await fetch(`${API_BASE}/api/assignments/`);
+      const res = await fetch(`${API_BASE}/api/assignments/`, {
+        headers: { "X-User-Email": userEmail },
+      });
+
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
       const data = await res.json();
-      // latest first
-      const sorted = [...data].sort((a, b) => b.id - a.id);
+      const arr = Array.isArray(data) ? data : [];
+      const sorted = [...arr].sort((a, b) => (b?.id ?? 0) - (a?.id ?? 0));
       setAssignments(sorted);
     } catch (err) {
       console.error("Failed to fetch assignments", err);
@@ -74,59 +83,63 @@ function AssignmentsPage() {
 
   useEffect(() => {
     fetchAssignments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleStatusChange = async (id, newStatus) => {
+    if (!userEmail) {
+      setError("Missing user identity. Please login again.");
+      return;
+    }
+
     try {
       const res = await fetch(`${API_BASE}/api/assignments/${id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Email": userEmail,
+        },
         body: JSON.stringify({ status: newStatus }),
       });
+
       if (!res.ok) {
         console.error(`Status update failed for ${id}: ${res.status}`);
+        const text = await res.text().catch(() => "");
+        console.error("Response body:", text);
         return;
       }
+
       const updated = await res.json();
-      setAssignments((prev) =>
-        prev.map((a) => (a.id === id ? updated : a))
-      );
+      setAssignments((prev) => prev.map((a) => (a.id === id ? updated : a)));
     } catch (err) {
       console.error("Error updating status", err);
     }
   };
 
-  // ---------- filtering logic ----------
-  const visibleAssignments = assignments.filter((a) => {
-    // search
-    const q = searchTerm.trim().toLowerCase();
-    if (q) {
-      const haystack = [
-        a.assignment_code,
-        a.borrower_name,
-        a.bank_name,
-        a.valuer_client_name,
-        a.branch_name,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
+  const visibleAssignments = useMemo(() => {
+    return assignments.filter((a) => {
+      const q = searchTerm.trim().toLowerCase();
+      if (q) {
+        const haystack = [
+          a.assignment_code,
+          a.borrower_name,
+          a.bank_name,
+          a.valuer_client_name,
+          a.branch_name,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
 
-      if (!haystack.includes(q)) return false;
-    }
+        if (!haystack.includes(q)) return false;
+      }
 
-    // status filter
-    if (statusFilter !== "ALL" && a.status !== statusFilter) {
-      return false;
-    }
+      if (statusFilter !== "ALL" && a.status !== statusFilter) return false;
+      if (caseTypeFilter !== "ALL" && a.case_type !== caseTypeFilter) return false;
 
-    // case type filter
-    if (caseTypeFilter !== "ALL" && a.case_type !== caseTypeFilter) {
-      return false;
-    }
-
-    return true;
-  });
+      return true;
+    });
+  }, [assignments, searchTerm, statusFilter, caseTypeFilter]);
 
   // ---------- styles ----------
   const pageShellStyle = {
@@ -241,7 +254,6 @@ function AssignmentsPage() {
 
   return (
     <div style={pageShellStyle}>
-      {/* header: title + new button + search */}
       <div style={headerRowStyle}>
         <div style={titleBlockStyle}>
           <h1 style={titleStyle}>Assignments</h1>
@@ -263,7 +275,6 @@ function AssignmentsPage() {
         />
       </div>
 
-      {/* filters */}
       <div style={filtersRowStyle}>
         <div>
           <span style={filterLabelStyle}>Status: </span>
@@ -290,13 +301,7 @@ function AssignmentsPage() {
           >
             {CASE_TYPE_OPTIONS.map((c) => (
               <option key={c} value={c}>
-                {c === "ALL"
-                  ? "All"
-                  : c === "EXTERNAL_VALUER"
-                  ? "External Valuer"
-                  : c === "DIRECT_CLIENT"
-                  ? "Direct Client"
-                  : c}
+                {c === "ALL" ? "All" : formatCaseType(c)}
               </option>
             ))}
           </select>
@@ -305,19 +310,19 @@ function AssignmentsPage() {
         <div style={subtleTextStyle}>
           Showing {visibleAssignments.length} of {assignments.length} assignments
         </div>
+
+        {!isAdmin && (
+          <div style={subtleTextStyle}>(Employee view: fees/payments hidden)</div>
+        )}
       </div>
 
-      {/* errors / loading */}
       {error && <p style={{ color: "red" }}>{error}</p>}
       {loading && <p>Loading…</p>}
 
       {!loading && assignments.length === 0 && !error && (
-        <p style={{ fontSize: "0.9rem", color: "#6b7280" }}>
-          No assignments yet.
-        </p>
+        <p style={{ fontSize: "0.9rem", color: "#6b7280" }}>No assignments yet.</p>
       )}
 
-      {/* table */}
       {!loading && assignments.length > 0 && (
         <div style={tableWrapperStyle}>
           {visibleAssignments.length === 0 && (
@@ -356,23 +361,17 @@ function AssignmentsPage() {
                     >
                       {a.assignment_code}
                     </td>
-                    <td style={tdStyle}>{a.case_type}</td>
-                    <td style={tdStyle}>
-                      {a.bank_name || a.valuer_client_name || "-"}
-                    </td>
+                    <td style={tdStyle}>{formatCaseType(a.case_type)}</td>
+                    <td style={tdStyle}>{a.bank_name || a.valuer_client_name || "-"}</td>
                     <td style={tdStyle}>{a.borrower_name || "-"}</td>
                     <td style={tdStyle}>{formatStatus(a.status)}</td>
                     {isAdmin && <td style={tdStyle}>{a.fees || 0}</td>}
-                    {isAdmin && (
-                      <td style={tdStyle}>{a.is_paid ? "Yes" : "No"}</td>
-                    )}
+                    {isAdmin && <td style={tdStyle}>{a.is_paid ? "Yes" : "No"}</td>}
                     <td style={tdStyle}>
                       <select
                         value={a.status}
                         style={selectStyle}
-                        onChange={(e) =>
-                          handleStatusChange(a.id, e.target.value)
-                        }
+                        onChange={(e) => handleStatusChange(a.id, e.target.value)}
                       >
                         {STATUS_OPTIONS.map((s) => (
                           <option key={s} value={s}>
