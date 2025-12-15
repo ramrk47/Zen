@@ -1,5 +1,5 @@
 // src/pages/NewAssignment.jsx
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -13,24 +13,51 @@ const STATUS_OPTIONS = [
   "CANCELLED",
 ];
 
-const CASE_TYPE_OPTIONS = [
-  "BANK",
-  "EXTERNAL_VALUER",
-  "DIRECT_CLIENT",
-];
+const CASE_TYPE_OPTIONS = ["BANK", "EXTERNAL_VALUER", "DIRECT_CLIENT"];
 
 function NewAssignmentPage() {
   const navigate = useNavigate();
 
   // core fields
   const [caseType, setCaseType] = useState("BANK");
-  const [bankName, setBankName] = useState("");
-  const [valuerClientName, setValuerClientName] = useState("");
-  const [branchName, setBranchName] = useState("");
+
+  // Master data lists
+  const [banks, setBanks] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [propertyTypes, setPropertyTypes] = useState([]);
+
+  // Selected master data IDs
+  const [bankId, setBankId] = useState("");
+  const [branchId, setBranchId] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [propertyTypeId, setPropertyTypeId] = useState("");
+
+  // NEW: allow quick-typed client name (does NOT create master record)
+  const [newClientName, setNewClientName] = useState("");
+
+  // Derived objects
+  const selectedBank = useMemo(
+    () => banks.find((b) => String(b.id) === String(bankId)) || null,
+    [banks, bankId]
+  );
+  const selectedBranch = useMemo(
+    () => branches.find((br) => String(br.id) === String(branchId)) || null,
+    [branches, branchId]
+  );
+  const selectedClient = useMemo(
+    () => clients.find((c) => String(c.id) === String(clientId)) || null,
+    [clients, clientId]
+  );
+  const selectedPropertyType = useMemo(
+    () => propertyTypes.find((p) => String(p.id) === String(propertyTypeId)) || null,
+    [propertyTypes, propertyTypeId]
+  );
+
+  // Other assignment fields
   const [borrowerName, setBorrowerName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
-  const [propertyType, setPropertyType] = useState("");
   const [landArea, setLandArea] = useState("");
   const [builtupArea, setBuiltupArea] = useState("");
   const [status, setStatus] = useState("PENDING");
@@ -42,8 +69,90 @@ function NewAssignmentPage() {
   const [locationLink, setLocationLink] = useState("");
   const [files, setFiles] = useState([]);
 
+  const [loadingMaster, setLoadingMaster] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [masterError, setMasterError] = useState("");
+
+  // ---------- Master data fetch ----------
+  useEffect(() => {
+    const loadMaster = async () => {
+      setLoadingMaster(true);
+      setMasterError("");
+
+      try {
+        const [banksRes, clientsRes, propRes] = await Promise.all([
+          fetch(`${API_BASE}/api/master/banks`),
+          fetch(`${API_BASE}/api/master/clients`),
+          fetch(`${API_BASE}/api/master/property-types`),
+        ]);
+
+        if (!banksRes.ok || !clientsRes.ok || !propRes.ok) {
+          setMasterError("Failed to load master data. Check backend /api/master/* endpoints.");
+          setLoadingMaster(false);
+          return;
+        }
+
+        const [banksJson, clientsJson, propJson] = await Promise.all([
+          banksRes.json(),
+          clientsRes.json(),
+          propRes.json(),
+        ]);
+
+        setBanks(Array.isArray(banksJson) ? banksJson : []);
+        setClients(Array.isArray(clientsJson) ? clientsJson : []);
+        setPropertyTypes(Array.isArray(propJson) ? propJson : []);
+      } catch (e) {
+        console.error("Master load error:", e);
+        setMasterError("Failed to load master data.");
+      } finally {
+        setLoadingMaster(false);
+      }
+    };
+
+    loadMaster();
+  }, []);
+
+  // Load branches when bankId changes (dependent dropdown)
+  useEffect(() => {
+    const loadBranches = async () => {
+      setBranches([]);
+      setBranchId("");
+
+      if (!bankId) return;
+
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/master/branches?bank_id=${encodeURIComponent(bankId)}`
+        );
+        if (!res.ok) {
+          console.error("Failed to load branches", res.status);
+          return;
+        }
+        const json = await res.json();
+        setBranches(Array.isArray(json) ? json : []);
+      } catch (e) {
+        console.error("Branches load error:", e);
+      }
+    };
+
+    loadBranches();
+  }, [bankId]);
+
+  // Reset party selections when caseType changes (prevents wrong payload)
+  useEffect(() => {
+    setError("");
+
+    if (caseType === "BANK") {
+      setClientId("");
+      setNewClientName("");
+    } else {
+      // For non-bank cases, clear bank+branch
+      setBankId("");
+      setBranchId("");
+      setBranches([]);
+    }
+  }, [caseType]);
 
   const handleFilesChange = (e) => {
     const list = Array.from(e.target.files || []);
@@ -56,24 +165,54 @@ function NewAssignmentPage() {
     setError("");
 
     try {
-      // basic payload – keep it lean so backend won't complain
+      // --- Validate minimum required selections ---
+      if (caseType === "BANK") {
+        if (!bankId) {
+          setError("Please select a Bank.");
+          setSaving(false);
+          return;
+        }
+        if (!branchId) {
+          setError("Please select a Branch (depends on Bank).");
+          setSaving(false);
+          return;
+        }
+      } else {
+        const typed = (newClientName || "").trim();
+        if (!clientId && !typed) {
+          setError("Please select an existing Client OR type a new Client name.");
+          setSaving(false);
+          return;
+        }
+      }
+
+      // Build payload using IDs (preferred). Backend will auto-fill legacy names from IDs.
       const payload = {
         case_type: caseType,
-        bank_name: bankName || null,
-        valuer_client_name: valuerClientName || null,
-        branch_name: branchName || null,
+
+        bank_id: caseType === "BANK" ? Number(bankId) : null,
+        branch_id: caseType === "BANK" ? Number(branchId) : null,
+
+        // For non-bank: prefer client_id, else fallback to valuer_client_name string
+        client_id: caseType !== "BANK" && clientId ? Number(clientId) : null,
+        valuer_client_name:
+          caseType !== "BANK" && !clientId
+            ? (newClientName || "").trim() || null
+            : null,
+
+        property_type_id: propertyTypeId ? Number(propertyTypeId) : null,
+
         borrower_name: borrowerName || null,
         phone: phone || null,
         address: address || null,
-        property_type: propertyType || null,
         land_area: landArea ? Number(landArea) : null,
         builtup_area: builtupArea ? Number(builtupArea) : null,
         status,
         fees: fees ? Number(fees) : 0,
         is_paid: isPaid,
         notes: notes || null,
-        // NOTE: locationLink and files are UI-only for now.
-        // We'll wire them to a proper upload endpoint later.
+
+        // locationLink/files remain UI-only until file API + model support exists
       };
 
       const res = await fetch(`${API_BASE}/api/assignments/`, {
@@ -92,10 +231,6 @@ function NewAssignmentPage() {
       }
 
       const created = await res.json();
-
-      // Later: after we have a /api/files upload, we'll loop `files` here
-      // and POST them with assignment_id = created.id.
-      // For now, we just navigate.
 
       if (created && created.id) {
         navigate(`/assignments/${created.id}`);
@@ -155,6 +290,7 @@ function NewAssignmentPage() {
 
   const selectStyle = {
     ...inputStyle,
+    backgroundColor: "#fff",
   };
 
   const gridTwoCol = {
@@ -201,9 +337,18 @@ function NewAssignmentPage() {
 
       <h1 style={headingStyle}>New Assignment</h1>
       <p style={{ fontSize: "0.85rem", color: "#6b7280" }}>
-        Create a new valuation assignment. Only the main details are required;
-        attachments and location are optional for now.
+        Create a new valuation assignment. Bank/Branch/Property Type are controlled. Client can be selected or typed quickly.
       </p>
+
+      {masterError && (
+        <div style={{ ...cardStyle, borderColor: "#fca5a5", backgroundColor: "#fff1f2" }}>
+          <div style={{ fontWeight: 600, marginBottom: "0.25rem" }}>Master Data not loaded</div>
+          <div style={{ fontSize: "0.85rem", color: "#7f1d1d" }}>{masterError}</div>
+          <div style={hintStyle}>
+            Fix backend first, then refresh. Without master data this form cannot enforce tagging.
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit}>
         {/* Basic info */}
@@ -257,6 +402,8 @@ function NewAssignmentPage() {
               </select>
             </div>
           </div>
+
+          {loadingMaster && <div style={hintStyle}>Loading master data…</div>}
         </div>
 
         {/* Parties */}
@@ -264,35 +411,86 @@ function NewAssignmentPage() {
           <h2 style={sectionTitleStyle}>Parties</h2>
 
           <div style={gridTwoCol}>
-            <div>
-              <div style={labelStyle}>Bank Name (for BANK cases)</div>
-              <input
-                style={inputStyle}
-                value={bankName}
-                onChange={(e) => setBankName(e.target.value)}
-                placeholder="e.g. SBI, BOI…"
-              />
-            </div>
+            {caseType === "BANK" ? (
+              <>
+                <div>
+                  <div style={labelStyle}>Bank</div>
+                  <select
+                    style={selectStyle}
+                    value={bankId}
+                    onChange={(e) => setBankId(e.target.value)}
+                  >
+                    <option value="">-- Select Bank --</option>
+                    {banks.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-            <div>
-              <div style={labelStyle}>External / Direct Client</div>
-              <input
-                style={inputStyle}
-                value={valuerClientName}
-                onChange={(e) => setValuerClientName(e.target.value)}
-                placeholder="Name of external valuer or direct client"
-              />
-            </div>
+                <div>
+                  <div style={labelStyle}>Branch (depends on Bank)</div>
+                  <select
+                    style={selectStyle}
+                    value={branchId}
+                    onChange={(e) => setBranchId(e.target.value)}
+                    disabled={!bankId}
+                  >
+                    <option value="">
+                      {bankId ? "-- Select Branch --" : "-- Select Bank first --"}
+                    </option>
+                    {branches.map((br) => (
+                      <option key={br.id} value={br.id}>
+                        {br.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <div style={labelStyle}>
+                    {caseType === "EXTERNAL_VALUER" ? "External Valuer (Select Existing)" : "Direct Client (Select Existing)"}
+                  </div>
+                  <select
+                    style={selectStyle}
+                    value={clientId}
+                    onChange={(e) => {
+                      setClientId(e.target.value);
+                      if (e.target.value) setNewClientName("");
+                    }}
+                  >
+                    <option value="">-- Select --</option>
+                    {clients.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={hintStyle}>
+                    If not in list, type a new name below (fast entry; no master record created yet).
+                  </div>
+                </div>
 
-            <div>
-              <div style={labelStyle}>Branch</div>
-              <input
-                style={inputStyle}
-                value={branchName}
-                onChange={(e) => setBranchName(e.target.value)}
-                placeholder="Mudhol, Jamkhandi…"
-              />
-            </div>
+                <div>
+                  <div style={labelStyle}>Or Type New Client Name</div>
+                  <input
+                    style={inputStyle}
+                    value={newClientName}
+                    onChange={(e) => {
+                      setNewClientName(e.target.value);
+                      if (e.target.value.trim()) setClientId("");
+                    }}
+                    placeholder="e.g. Ramesh Patil / XYZ Enterprises"
+                  />
+                  <div style={hintStyle}>
+                    This will save to the assignment as text. Admin can later add it to Master Clients cleanly.
+                  </div>
+                </div>
+              </>
+            )}
 
             <div>
               <div style={labelStyle}>Borrower Name</div>
@@ -332,12 +530,19 @@ function NewAssignmentPage() {
 
             <div>
               <div style={labelStyle}>Property Type</div>
-              <input
-                style={inputStyle}
-                value={propertyType}
-                onChange={(e) => setPropertyType(e.target.value)}
-                placeholder="Residential, Commercial, Plot…"
-              />
+              <select
+                style={selectStyle}
+                value={propertyTypeId}
+                onChange={(e) => setPropertyTypeId(e.target.value)}
+              >
+                <option value="">-- Select Property Type --</option>
+                {propertyTypes.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <div style={hintStyle}>Controlled to avoid duplicates.</div>
             </div>
 
             <div>
@@ -360,6 +565,7 @@ function NewAssignmentPage() {
                 onChange={(e) => setBuiltupArea(e.target.value)}
                 placeholder="e.g. 900"
               />
+              <div style={hintStyle}>Multi-floor built-up area comes next (Step 3).</div>
             </div>
           </div>
         </div>
@@ -378,6 +584,7 @@ function NewAssignmentPage() {
                 onChange={(e) => setFees(e.target.value)}
                 placeholder="e.g. 1500"
               />
+              <div style={hintStyle}>(Role-based hiding for employees comes next.)</div>
             </div>
 
             <div>
@@ -424,23 +631,14 @@ function NewAssignmentPage() {
                 onChange={(e) => setLocationLink(e.target.value)}
                 placeholder="Google Maps link or GPS note"
               />
-              <div style={hintStyle}>
-                This is just stored in the UI for now. We&apos;ll wire it to a backend
-                field / map view later.
-              </div>
+              <div style={hintStyle}>Stored in UI for now. We’ll wire it to backend later.</div>
             </div>
 
             <div>
               <div style={labelStyle}>Attach Files (photos, docs)</div>
-              <input
-                type="file"
-                multiple
-                onChange={handleFilesChange}
-              />
-              <div style={hintStyle}>
-                You can already select files here. Uploading + saving them to the server
-                will be hooked in once the file API is ready.
-              </div>
+              <input type="file" multiple onChange={handleFilesChange} />
+              <div style={hintStyle}>Upload endpoint comes later.</div>
+
               {files.length > 0 && (
                 <div style={filesListStyle}>
                   Selected:
@@ -458,7 +656,14 @@ function NewAssignmentPage() {
         </div>
 
         {/* Save button */}
-        <div style={{ ...cardStyle, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div
+          style={{
+            ...cardStyle,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
           <div>
             {error && <span style={{ color: "red", fontSize: "0.85rem" }}>{error}</span>}
           </div>
