@@ -1,4 +1,5 @@
-from datetime import datetime, date
+from datetime import datetime
+
 from sqlalchemy import Boolean, Column, Date, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import relationship
 
@@ -49,9 +50,4 @@ class Assignment(Base):
     files = relationship("File", back_populates="assignment", cascade="all, delete-orphan")
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(
-        DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-        nullable=False,
-    )
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
