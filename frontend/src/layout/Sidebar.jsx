@@ -1,10 +1,10 @@
-// src/layout/Sidebar.jsx
 import React from "react";
 import { NavLink } from "react-router-dom";
-import { currentUser } from "../auth/currentUser";
+import { getCurrentUser } from "../auth/currentUser";
 
 function Sidebar() {
-  const isAdmin = currentUser.role === "ADMIN";
+  const user = getCurrentUser();
+  const isAdmin = user?.role === "ADMIN";
 
   const sidebarStyle = {
     height: "100vh",
@@ -42,35 +42,35 @@ function Sidebar() {
     fontWeight: 600,
   };
 
-  const navLinkClass = ({ isActive }) => {
-    return {
-      ...linkBaseStyle,
-      ...(isActive ? activeStyle : {}),
-    };
-  };
+  const navLinkStyle = ({ isActive }) => ({
+    ...linkBaseStyle,
+    ...(isActive ? activeStyle : {}),
+  });
 
   return (
     <div style={sidebarStyle}>
       <div style={brandStyle}>Zen Ops</div>
 
       <nav style={navStyle}>
-        <NavLink to="/home" style={navLinkClass}>
+        <NavLink to="/home" style={navLinkStyle}>
           Home
         </NavLink>
 
-        <NavLink to="/assignments" style={navLinkClass}>
+        <NavLink to="/assignments" style={navLinkStyle}>
           Assignments
         </NavLink>
 
         {isAdmin && (
-          <NavLink to="/invoices" style={navLinkClass}>
+          <NavLink to="/invoices" style={navLinkStyle}>
             Invoices / Finance
           </NavLink>
         )}
 
-        <NavLink to="/settings" style={navLinkClass}>
-          {isAdmin ? "Settings / Admin" : "Settings"}
-        </NavLink>
+        {isAdmin && (
+          <NavLink to="/settings" style={navLinkStyle}>
+            Settings / Admin
+          </NavLink>
+        )}
       </nav>
     </div>
   );

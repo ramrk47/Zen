@@ -1,9 +1,10 @@
-# app/schemas/user.py
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+
 
 class LoginRequest(BaseModel):
-    email: str = Field(..., min_length=3, max_length=255)
-    password: str = Field(..., min_length=1)
+    email: str
+    password: str
+
 
 class LoginResponse(BaseModel):
     id: int
@@ -11,3 +12,18 @@ class LoginResponse(BaseModel):
     full_name: str | None = None
     role: str
     token: str
+
+
+class CreateUserRequest(BaseModel):
+    email: str
+    password: str
+    full_name: str | None = None
+    role: str | None = None
+
+
+class CreateUserResponse(BaseModel):
+    id: int
+    email: str
+    full_name: str | None = None
+    role: str
+    is_active: bool

@@ -1,5 +1,6 @@
 import React from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+
 import Login from "./pages/Login";
 import Sidebar from "./layout/Sidebar";
 import Topbar from "./layout/Topbar";
@@ -9,8 +10,27 @@ import NewAssignmentPage from "./pages/NewAssignment";
 import AssignmentDetailPage from "./pages/AssignmentDetail";
 import InvoicesPage from "./pages/Invoices";
 import SettingsPage from "./pages/Settings";
+import ManagePersonnelPage from "./pages/ManagePersonnel";
+import { getCurrentUser } from "./auth/currentUser";
 
 function App() {
+  const location = useLocation();
+  const user = getCurrentUser();
+  const isLoginRoute = location.pathname === "/login";
+
+  if (!user && !isLoginRoute) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (isLoginRoute) {
+    return (
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    );
+  }
+
   const shellStyle = {
     display: "flex",
     minHeight: "100vh",
@@ -48,19 +68,15 @@ function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/home" replace />} />
             <Route path="/home" element={<HomePage />} />
-            <Route path="/login" element={<Login />} />
 
             <Route path="/assignments" element={<AssignmentsPage />} />
             <Route path="/assignments/new" element={<NewAssignmentPage />} />
-            <Route
-              path="/assignments/:id"
-              element={<AssignmentDetailPage />}
-            />
+            <Route path="/assignments/:id" element={<AssignmentDetailPage />} />
 
             <Route path="/invoices" element={<InvoicesPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/settings/personnel" element={<ManagePersonnelPage />} />
 
-            {/* fallback */}
             <Route path="*" element={<Navigate to="/home" replace />} />
           </Routes>
         </main>

@@ -3,6 +3,13 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { currentUser } from "../auth/currentUser";
 
+function prettyStatus(s) {
+  return (s || "")
+    .toLowerCase()
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 const API_BASE = "http://127.0.0.1:8000";
 
 const STATUS_OPTIONS = [
