@@ -10,6 +10,7 @@ from app.models.master_data import Bank, Branch, Client, PropertyType  # noqa: F
 from app.routers.assignments import router as assignments_router
 from app.routers.auth import router as auth_router
 from app.routers.master_data import router as master_data_router
+from app.routers.files import router as files_router
 
 app = FastAPI(
     title="Zen Ops API",
@@ -41,3 +42,4 @@ def health_check():
 app.include_router(assignments_router)
 app.include_router(auth_router)
 app.include_router(master_data_router)
+app.include_router(files_router)

@@ -1,6 +1,5 @@
-// src/pages/AssignmentDetail.jsx
-import React, { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { getCurrentUser } from "../auth/currentUser";
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -14,61 +13,77 @@ const STATUS_OPTIONS = [
   "CANCELLED",
 ];
 
+const STATUS_LABELS = {
+  PENDING: "Pending",
+  SITE_VISIT: "Site Visit",
+  UNDER_PROCESS: "Under Process",
+  SUBMITTED: "Submitted",
+  COMPLETED: "Completed",
+  CANCELLED: "Cancelled",
+};
+
 function formatStatus(status) {
-  switch (status) {
-    case "PENDING":
-      return "Pending";
-    case "SITE_VISIT":
-      return "Site Visit";
-    case "UNDER_PROCESS":
-      return "Under Process";
-    case "SUBMITTED":
-      return "Submitted";
-    case "COMPLETED":
-      return "Completed";
-    case "CANCELLED":
-      return "Cancelled";
-    default:
-      return status || "-";
+  return STATUS_LABELS[status] || status || "-";
+}
+
+function formatDate(dt) {
+  if (!dt) return "-";
+  try {
+    const d = new Date(dt);
+    if (Number.isNaN(d.getTime())) return String(dt);
+    return d.toLocaleString("en-IN");
+  } catch {
+    return String(dt);
   }
 }
 
-function formatDate(value) {
-  if (!value) return "-";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleString("en-IN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-}
-
 function AssignmentDetailPage() {
-  const { id } = useParams();
   const navigate = useNavigate();
+  const { id } = useParams();
 
   const user = getCurrentUser();
   const userEmail = (user?.email || "").trim();
   const isAdmin = (user?.role || "").toUpperCase() === "ADMIN";
 
   const [assignment, setAssignment] = useState(null);
+
+  // editable fields (keep minimal & safe)
+  const [status, setStatus] = useState("PENDING");
+  const [borrowerName, setBorrowerName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+  const [landArea, setLandArea] = useState("");
+  const [builtupArea, setBuiltupArea] = useState("");
+  const [notes, setNotes] = useState("");
+
+  // admin money fields (only shown if admin)
+  const [fees, setFees] = useState("");
+  const [isPaid, setIsPaid] = useState(false);
+
+  // files
+  const [files, setFiles] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  // form state
-  const [formStatus, setFormStatus] = useState("");
-  const [formFees, setFormFees] = useState("");
-  const [formIsPaid, setFormIsPaid] = useState(false);
-  const [formNotes, setFormNotes] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  const authedFetch = async (url, opts = {}) => {
-    if (!userEmail) throw new Error("Missing user identity");
-    const headers = {
-      ...(opts.headers || {}),
-      "X-User-Email": userEmail,
-    };
-    return fetch(url, { ...opts, headers });
+  const loadFiles = async () => {
+    if (!userEmail) return;
+    try {
+      const fRes = await fetch(`${API_BASE}/api/files/${id}`, {
+        headers: { "X-User-Email": userEmail },
+      });
+      if (fRes.ok) {
+        const fJson = await fRes.json();
+        setFiles(Array.isArray(fJson) ? fJson : []);
+      } else {
+        setFiles([]);
+      }
+    } catch {
+      setFiles([]);
+    }
   };
 
   const fetchAssignment = async () => {
@@ -82,28 +97,39 @@ function AssignmentDetailPage() {
     }
 
     try {
-      const res = await authedFetch(`${API_BASE}/api/assignments/${id}`);
+      const res = await fetch(`${API_BASE}/api/assignments/${id}`, {
+        headers: { "X-User-Email": userEmail },
+      });
+
       if (!res.ok) {
-        if (res.status === 404) setError("Assignment not found.");
-        else setError(`Error: ${res.status}`);
-        return;
+        const text = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}${text ? ` - ${text}` : ""}`);
       }
 
       const data = await res.json();
       setAssignment(data);
 
       // seed form
-      setFormStatus(data.status || "");
-      setFormFees(data.fees ?? "");
-      setFormIsPaid(!!data.is_paid);
-      setFormNotes(data.notes || "");
-    } catch (err) {
-      console.error("Failed to fetch assignment detail", err);
-      setError(
-        err?.message === "Missing user identity"
-          ? "Missing user identity. Please login again."
-          : "Failed to load assignment."
-      );
+      setStatus(data?.status || "PENDING");
+      setBorrowerName(data?.borrower_name || "");
+      setPhone(data?.phone || "");
+      setAddress(data?.address || "");
+      setLandArea(data?.land_area ?? "");
+      setBuiltupArea(data?.builtup_area ?? "");
+      setNotes(data?.notes || "");
+
+      if (isAdmin) {
+        setFees(data?.fees ?? "");
+        setIsPaid(!!data?.is_paid);
+      } else {
+        setFees("");
+        setIsPaid(false);
+      }
+
+      await loadFiles();
+    } catch (e) {
+      console.error(e);
+      setError("Failed to load assignment.");
     } finally {
       setLoading(false);
     }
@@ -112,353 +138,380 @@ function AssignmentDetailPage() {
   useEffect(() => {
     fetchAssignment();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, userEmail]);
+  }, [id]);
 
   const handleSave = async () => {
-    if (!assignment) return;
+    setSaving(true);
+    setError("");
 
     if (!userEmail) {
+      setSaving(false);
       setError("Missing user identity. Please login again.");
       return;
     }
 
-    setSaving(true);
-    setError("");
-
     try {
       const payload = {
-        status: formStatus || assignment.status,
-        notes: formNotes,
+        status,
+        borrower_name: borrowerName || null,
+        phone: phone || null,
+        address: address || null,
+        land_area: landArea === "" ? null : Number(landArea),
+        builtup_area: builtupArea === "" ? null : Number(builtupArea),
+        notes: notes || null,
       };
 
-      // ADMIN ONLY: money fields
       if (isAdmin) {
-        payload.fees = formFees === "" || formFees === null ? 0 : Number(formFees);
-        payload.is_paid = formIsPaid;
+        payload.fees = fees === "" ? 0 : Number(fees);
+        payload.is_paid = !!isPaid;
       }
 
-      const res = await authedFetch(`${API_BASE}/api/assignments/${id}`, {
+      const res = await fetch(`${API_BASE}/api/assignments/${id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Email": userEmail,
+        },
         body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
-        console.error("Save failed", res.status);
-        const text = await res.text();
-        console.error("Response body:", text);
-        setError("Failed to save changes. Check console for backend message.");
-        return;
+        const text = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}${text ? ` - ${text}` : ""}`);
       }
 
       const updated = await res.json();
       setAssignment(updated);
-
-      // sync form with server copy
-      setFormStatus(updated.status || "");
-      setFormFees(updated.fees ?? "");
-      setFormIsPaid(!!updated.is_paid);
-      setFormNotes(updated.notes || "");
-    } catch (err) {
-      console.error("Error saving assignment", err);
+    } catch (e) {
+      console.error(e);
       setError("Failed to save changes.");
     } finally {
       setSaving(false);
     }
   };
 
-  const containerStyle = {
-    maxWidth: "900px",
-    margin: "0 auto",
+  const handleUpload = async (file) => {
+    if (!file) return;
+
+    if (!userEmail) {
+      setUploadError("Missing user identity. Please login again.");
+      return;
+    }
+
+    setUploading(true);
+    setUploadError("");
+
+    try {
+      const form = new FormData();
+      form.append("uploaded", file);
+
+      const res = await fetch(`${API_BASE}/api/files/upload/${id}`, {
+        method: "POST",
+        headers: { "X-User-Email": userEmail },
+        body: form,
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`Upload failed (${res.status}) ${text}`);
+      }
+
+      await loadFiles();
+    } catch (e) {
+      console.error(e);
+      setUploadError("Failed to upload file.");
+    } finally {
+      setUploading(false);
+    }
   };
 
-  const sectionStyle = {
+  const downloadUrl = useMemo(() => {
+    return (fileId) => `${API_BASE}/api/files/download/${fileId}`;
+  }, []);
+
+  // ---------- styles ----------
+  const pageStyle = { maxWidth: "980px", margin: "0 auto" };
+
+  const topRowStyle = {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    flexWrap: "wrap",
+    gap: "0.75rem",
+    marginBottom: "0.75rem",
+  };
+
+  const subtleTextStyle = { fontSize: "0.85rem", color: "#6b7280" };
+
+  const cardStyle = {
     backgroundColor: "#ffffff",
-    borderRadius: "8px",
-    border: "1px solid #e2e2e2",
+    borderRadius: "12px",
+    border: "1px solid #e5e7eb",
     padding: "1rem 1.25rem",
-    marginBottom: "1rem",
+    marginTop: "0.75rem",
+  };
+
+  const sectionStyle = cardStyle;
+
+  const gridTwoCol = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+    gap: "0.75rem 1.5rem",
   };
 
   const labelStyle = {
-    fontSize: "0.8rem",
-    color: "#666",
+    fontSize: "0.75rem",
     textTransform: "uppercase",
+    color: "#6b7280",
     letterSpacing: "0.04em",
     marginBottom: "0.2rem",
   };
 
-  const valueStyle = {
-    fontSize: "0.95rem",
-    fontWeight: 500,
-  };
-
-  const twoColGrid = {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: "0.75rem 1.5rem",
-  };
-
   const inputStyle = {
     width: "100%",
-    padding: "0.35rem 0.5rem",
+    padding: "0.4rem 0.5rem",
     fontSize: "0.9rem",
-    borderRadius: "4px",
+    borderRadius: "6px",
     border: "1px solid #d1d5db",
     boxSizing: "border-box",
   };
 
-  const selectStyle = { ...inputStyle };
-  const textareaStyle = { ...inputStyle, minHeight: "80px", resize: "vertical" };
+  const textareaStyle = { ...inputStyle, minHeight: "90px", resize: "vertical" };
+
+  const pillStyle = {
+    display: "inline-block",
+    padding: "0.15rem 0.55rem",
+    borderRadius: "999px",
+    border: "1px solid #e5e7eb",
+    backgroundColor: "#f9fafb",
+    fontSize: "0.8rem",
+    color: "#374151",
+  };
 
   return (
-    <div style={containerStyle}>
-      <button
-        type="button"
-        onClick={() => navigate("/assignments")}
-        style={{
-          marginBottom: "0.75rem",
-          padding: "0.3rem 0.7rem",
-          fontSize: "0.85rem",
-          borderRadius: "4px",
-          border: "1px solid #ccc",
-          backgroundColor: "#f9fafb",
-          cursor: "pointer",
-        }}
-      >
-        ← Back to Assignments
-      </button>
+    <div style={pageStyle}>
+      <div style={topRowStyle}>
+        <div>
+          <button
+            type="button"
+            onClick={() => navigate("/assignments")}
+            style={{
+              padding: "0.3rem 0.7rem",
+              fontSize: "0.85rem",
+              borderRadius: "6px",
+              border: "1px solid #d1d5db",
+              backgroundColor: "#ffffff",
+              cursor: "pointer",
+              marginBottom: "0.5rem",
+            }}
+          >
+            ← Back
+          </button>
 
-      <h1 style={{ marginBottom: "0.75rem" }}>Assignment Detail</h1>
-
-      {!userEmail && (
-        <div
-          style={{
-            ...sectionStyle,
-            borderColor: "#fca5a5",
-            backgroundColor: "#fff1f2",
-          }}
-        >
-          <div style={{ fontWeight: 600, marginBottom: "0.25rem" }}>Not logged in</div>
-          <div style={{ fontSize: "0.85rem", color: "#7f1d1d" }}>
-            Missing user identity. Please login again.
+          <h1 style={{ margin: 0 }}>Assignment #{id}</h1>
+          <div style={subtleTextStyle}>
+            {assignment?.assignment_code ? (
+              <span style={pillStyle}>{assignment.assignment_code}</span>
+            ) : (
+              <span />
+            )}
+            <span style={{ marginLeft: "0.6rem" }}>
+              Created: {formatDate(assignment?.created_at)}
+            </span>
           </div>
         </div>
-      )}
 
-      {loading && <p>Loading assignment…</p>}
-      {error && <p style={{ color: "red" }}>{error}</p>}
-      {!loading && !assignment && !error && <p>No data.</p>}
+        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={fetchAssignment}
+            style={{
+              padding: "0.35rem 0.8rem",
+              fontSize: "0.85rem",
+              borderRadius: "999px",
+              border: "1px solid #d1d5db",
+              backgroundColor: "#ffffff",
+              cursor: "pointer",
+            }}
+          >
+            Refresh
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={handleSave}
+            style={{
+              padding: "0.35rem 0.9rem",
+              fontSize: "0.85rem",
+              borderRadius: "999px",
+              border: "none",
+              backgroundColor: saving ? "#9ca3af" : "#16a34a",
+              color: "#ffffff",
+              cursor: saving ? "default" : "pointer",
+            }}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
 
-      {assignment && (
-        <>
-          {/* SUMMARY */}
-          <section style={sectionStyle}>
-            <div style={{ marginBottom: "0.75rem" }}>
-              <div style={labelStyle}>Assignment Code</div>
-              <div style={{ ...valueStyle, fontSize: "1.1rem" }}>
-                {assignment.assignment_code}
-              </div>
+      {loading && <p style={{ marginTop: "0.75rem" }}>Loading…</p>}
+      {error && <p style={{ marginTop: "0.75rem", color: "red" }}>{error}</p>}
+
+      {/* SUMMARY */}
+      <section style={sectionStyle}>
+        <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>Summary</h2>
+        <div style={gridTwoCol}>
+          <div>
+            <div style={labelStyle}>Case Type</div>
+            <div style={{ fontWeight: 600 }}>{assignment?.case_type || "-"}</div>
+          </div>
+          <div>
+            <div style={labelStyle}>Bank / Client</div>
+            <div style={{ fontWeight: 600 }}>
+              {assignment?.bank_name || assignment?.valuer_client_name || "-"}
             </div>
+          </div>
+          <div>
+            <div style={labelStyle}>Branch</div>
+            <div style={{ fontWeight: 600 }}>{assignment?.branch_name || "-"}</div>
+          </div>
+          <div>
+            <div style={labelStyle}>Status</div>
+            <div style={{ fontWeight: 600 }}>{formatStatus(assignment?.status)}</div>
+          </div>
+        </div>
+      </section>
 
-            <div style={twoColGrid}>
-              <div>
-                <div style={labelStyle}>Case Type</div>
-                <div style={valueStyle}>{assignment.case_type}</div>
-              </div>
-              <div>
-                <div style={labelStyle}>Current Status</div>
-                <div style={valueStyle}>{formatStatus(assignment.status)}</div>
-              </div>
+      {/* EDIT */}
+      <section style={sectionStyle}>
+        <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>Edit</h2>
 
-              {isAdmin && (
-                <div>
-                  <div style={labelStyle}>Fees (₹)</div>
-                  <div style={valueStyle}>{assignment.fees ?? 0}</div>
-                </div>
-              )}
-              {isAdmin && (
-                <div>
-                  <div style={labelStyle}>Paid?</div>
-                  <div style={valueStyle}>{assignment.is_paid ? "Yes" : "No"}</div>
-                </div>
-              )}
+        <div style={gridTwoCol}>
+          <div>
+            <div style={labelStyle}>Status</div>
+            <select style={inputStyle} value={status} onChange={(e) => setStatus(e.target.value)}>
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {formatStatus(s)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div style={labelStyle}>Borrower Name</div>
+            <input style={inputStyle} value={borrowerName} onChange={(e) => setBorrowerName(e.target.value)} />
+          </div>
+
+          <div>
+            <div style={labelStyle}>Phone</div>
+            <input style={inputStyle} value={phone} onChange={(e) => setPhone(e.target.value)} />
+          </div>
+
+          <div>
+            <div style={labelStyle}>Land Area (sqft)</div>
+            <input type="number" style={inputStyle} value={landArea} onChange={(e) => setLandArea(e.target.value)} />
+          </div>
+
+          <div>
+            <div style={labelStyle}>Built-up Area (sqft)</div>
+            <input type="number" style={inputStyle} value={builtupArea} onChange={(e) => setBuiltupArea(e.target.value)} />
+          </div>
+        </div>
+
+        <div style={{ marginTop: "0.75rem" }}>
+          <div style={labelStyle}>Address</div>
+          <textarea style={textareaStyle} value={address} onChange={(e) => setAddress(e.target.value)} />
+        </div>
+
+        <div style={{ marginTop: "0.75rem" }}>
+          <div style={labelStyle}>Notes</div>
+          <textarea style={textareaStyle} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </div>
+
+        {isAdmin ? (
+          <div style={{ ...gridTwoCol, marginTop: "0.75rem" }}>
+            <div>
+              <div style={labelStyle}>Fees (₹)</div>
+              <input type="number" style={inputStyle} value={fees} onChange={(e) => setFees(e.target.value)} />
             </div>
-          </section>
+            <div>
+              <div style={labelStyle}>Paid?</div>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.9rem" }}>
+                <input type="checkbox" checked={isPaid} onChange={(e) => setIsPaid(e.target.checked)} />
+                Mark as paid
+              </label>
+            </div>
+          </div>
+        ) : (
+          <div style={{ marginTop: "0.75rem", ...subtleTextStyle }}>
+            Finance fields are hidden for employees.
+          </div>
+        )}
+      </section>
 
-          {/* EDIT SECTION */}
-          <section style={sectionStyle}>
-            <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>
-              Update Assignment
-            </h2>
+      {/* FILES */}
+      <section style={sectionStyle}>
+        <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>Files</h2>
 
-            <p
-              style={{
-                fontSize: "0.8rem",
-                color: "#6b7280",
-                marginBottom: "0.75rem",
-              }}
-            >
-              {isAdmin
-                ? "Admins can update status, fees, payment status and notes."
-                : "Employees can update status and notes. Financial fields are hidden."}
-            </p>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+          <input
+            type="file"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleUpload(f);
+              e.target.value = "";
+            }}
+            disabled={uploading}
+          />
+          {uploading && <span style={{ fontSize: "0.85rem", color: "#6b7280" }}>Uploading…</span>}
+        </div>
 
-            <div style={twoColGrid}>
-              <div>
-                <div style={labelStyle}>Status</div>
-                <select
-                  style={selectStyle}
-                  value={formStatus}
-                  onChange={(e) => setFormStatus(e.target.value)}
-                  disabled={!userEmail}
-                >
-                  {STATUS_OPTIONS.map((s) => (
-                    <option key={s} value={s}>
-                      {formatStatus(s)}
-                    </option>
-                  ))}
-                </select>
-              </div>
+        {uploadError && <p style={{ color: "red", marginTop: "0.5rem" }}>{uploadError}</p>}
 
-              {isAdmin && (
-                <>
+        {files.length === 0 ? (
+          <p style={{ marginTop: "0.5rem", fontSize: "0.85rem", color: "#6b7280" }}>
+            No files uploaded yet.
+          </p>
+        ) : (
+          <div style={{ marginTop: "0.75rem" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "0.5rem 1rem" }}>
+              {files.map((f) => (
+                <React.Fragment key={f.id}>
                   <div>
-                    <div style={labelStyle}>Fees (₹)</div>
-                    <input
-                      type="number"
-                      style={inputStyle}
-                      value={formFees}
-                      onChange={(e) => setFormFees(e.target.value)}
-                      disabled={!userEmail}
-                    />
+                    <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>{f.filename}</div>
+                    <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>
+                      Uploaded: {formatDate(f.uploaded_at)}
+                    </div>
                   </div>
-                  <div>
-                    <div style={labelStyle}>Paid?</div>
-                    <label
+                  <div style={{ display: "flex", alignItems: "center" }}>
+                    <a
+                      href={downloadUrl(f.id)}
+                      target="_blank"
+                      rel="noreferrer"
                       style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "0.4rem",
-                        fontSize: "0.9rem",
+                        fontSize: "0.85rem",
+                        textDecoration: "none",
+                        padding: "0.25rem 0.6rem",
+                        borderRadius: "999px",
+                        border: "1px solid #d1d5db",
+                        backgroundColor: "#ffffff",
                       }}
                     >
-                      <input
-                        type="checkbox"
-                        checked={formIsPaid}
-                        onChange={(e) => setFormIsPaid(e.target.checked)}
-                        disabled={!userEmail}
-                      />
-                      Mark as paid
-                    </label>
+                      Download
+                    </a>
                   </div>
-                </>
-              )}
+                </React.Fragment>
+              ))}
             </div>
+          </div>
+        )}
 
-            <div style={{ marginTop: "0.75rem" }}>
-              <div style={labelStyle}>Notes</div>
-              <textarea
-                style={textareaStyle}
-                value={formNotes}
-                onChange={(e) => setFormNotes(e.target.value)}
-                placeholder="Internal notes about this assignment…"
-                disabled={!userEmail}
-              />
-            </div>
-
-            <div style={{ marginTop: "0.75rem" }}>
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={saving || !userEmail}
-                style={{
-                  padding: "0.45rem 0.9rem",
-                  fontSize: "0.9rem",
-                  borderRadius: "4px",
-                  border: "none",
-                  backgroundColor: saving ? "#9ca3af" : "#2563eb",
-                  color: "#ffffff",
-                  cursor: saving ? "default" : "pointer",
-                }}
-              >
-                {saving ? "Saving…" : "Save Changes"}
-              </button>
-            </div>
-          </section>
-
-          {/* PARTIES */}
-          <section style={sectionStyle}>
-            <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>Parties</h2>
-            <div style={twoColGrid}>
-              <div>
-                <div style={labelStyle}>Bank Name / Client</div>
-                <div style={valueStyle}>
-                  {assignment.bank_name || assignment.valuer_client_name || "-"}
-                </div>
-              </div>
-              <div>
-                <div style={labelStyle}>Branch</div>
-                <div style={valueStyle}>{assignment.branch_name || "-"}</div>
-              </div>
-              <div>
-                <div style={labelStyle}>Borrower</div>
-                <div style={valueStyle}>{assignment.borrower_name || "-"}</div>
-              </div>
-              <div>
-                <div style={labelStyle}>Phone</div>
-                <div style={valueStyle}>{assignment.phone || "-"}</div>
-              </div>
-            </div>
-          </section>
-
-          {/* PROPERTY */}
-          <section style={sectionStyle}>
-            <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>Property</h2>
-            <div style={twoColGrid}>
-              <div>
-                <div style={labelStyle}>Address</div>
-                <div style={valueStyle}>{assignment.address || "-"}</div>
-              </div>
-              <div>
-                <div style={labelStyle}>Property Type</div>
-                <div style={valueStyle}>{assignment.property_type || "-"}</div>
-              </div>
-              <div>
-                <div style={labelStyle}>Land Area</div>
-                <div style={valueStyle}>{assignment.land_area ?? "-"}</div>
-              </div>
-              <div>
-                <div style={labelStyle}>Built-up Area</div>
-                <div style={valueStyle}>{assignment.builtup_area ?? "-"}</div>
-              </div>
-            </div>
-          </section>
-
-          {/* TIMELINE */}
-          <section style={sectionStyle}>
-            <h2 style={{ marginBottom: "0.5rem", fontSize: "1rem" }}>Timeline</h2>
-            <div style={twoColGrid}>
-              <div>
-                <div style={labelStyle}>Site Visit Date</div>
-                <div style={valueStyle}>{formatDate(assignment.site_visit_date)}</div>
-              </div>
-              <div>
-                <div style={labelStyle}>Report Due Date</div>
-                <div style={valueStyle}>{formatDate(assignment.report_due_date)}</div>
-              </div>
-              <div>
-                <div style={labelStyle}>Created At</div>
-                <div style={valueStyle}>{formatDate(assignment.created_at)}</div>
-              </div>
-              <div>
-                <div style={labelStyle}>Updated At</div>
-                <div style={valueStyle}>{formatDate(assignment.updated_at)}</div>
-              </div>
-            </div>
-          </section>
-        </>
-      )}
+        <div style={{ marginTop: "0.75rem", ...subtleTextStyle }}>
+          Tip: upload site photos, documents, sanction letters, etc.
+        </div>
+      </section>
     </div>
   );
 }
