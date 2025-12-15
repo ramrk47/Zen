@@ -1,5 +1,6 @@
 import React from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
+import Login from "./pages/Login";
 import Sidebar from "./layout/Sidebar";
 import Topbar from "./layout/Topbar";
 import HomePage from "./pages/Home";
@@ -47,6 +48,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/home" replace />} />
             <Route path="/home" element={<HomePage />} />
+            <Route path="/login" element={<Login />} />
 
             <Route path="/assignments" element={<AssignmentsPage />} />
             <Route path="/assignments/new" element={<NewAssignmentPage />} />
