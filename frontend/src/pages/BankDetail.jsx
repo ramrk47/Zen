@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getCurrentUser } from "../auth/currentUser";
+import AssignmentsModule from "../shared/AssignmentsModule";
 
 const API_BASE = "http://127.0.0.1:8000";
 
@@ -41,11 +42,6 @@ function BankDetailPage() {
     email: "",
   });
   const [savingBranch, setSavingBranch] = useState(false);
-
-  // ✅ assignments table (bottom)
-  const [assLoading, setAssLoading] = useState(false);
-  const [assError, setAssError] = useState("");
-  const [assignments, setAssignments] = useState([]);
 
   const authedFetch = async (url, opts = {}) => {
     if (!userEmail) throw new Error("Not authenticated");
@@ -96,43 +92,6 @@ function BankDetailPage() {
     };
 
     if (userEmail) load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, userEmail]);
-
-  // ✅ Load assignments for this bank (bottom table)
-  useEffect(() => {
-    const loadAssignments = async () => {
-      setAssLoading(true);
-      setAssError("");
-      setAssignments([]);
-
-      if (!userEmail) {
-        setAssError("Not authenticated.");
-        setAssLoading(false);
-        return;
-      }
-
-      try {
-        const res = await authedFetch(
-          `${API_BASE}/api/assignments?bank_id=${encodeURIComponent(id)}`
-        );
-
-        if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          throw new Error(text || `HTTP ${res.status}`);
-        }
-
-        const data = await res.json();
-        setAssignments(Array.isArray(data) ? data : []);
-      } catch (e) {
-        setAssError(e?.message || "Failed to load bank assignments");
-      } finally {
-        setAssLoading(false);
-      }
-    };
-
-    // only run once bank page has an id + user
-    if (userEmail) loadAssignments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, userEmail]);
 
@@ -202,9 +161,7 @@ function BankDetailPage() {
       const created = await res.json();
       setBranches((prev) => {
         const next = [...prev, created];
-        next.sort((a, b) =>
-          String(a.name || "").localeCompare(String(b.name || ""))
-        );
+        next.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
         return next;
       });
 
@@ -218,12 +175,7 @@ function BankDetailPage() {
   };
 
   // ---------- Styles ----------
-  const pageStyle = {
-    maxWidth: "980px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "1rem",
-  };
+  const pageStyle = { maxWidth: "980px", display: "flex", flexDirection: "column", gap: "1rem" };
 
   const cardStyle = {
     background: "#fff",
@@ -233,12 +185,7 @@ function BankDetailPage() {
     boxShadow: "0 1px 0 rgba(0,0,0,0.03)",
   };
 
-  const rowStyle = {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "1rem",
-    flexWrap: "wrap",
-  };
+  const rowStyle = { display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" };
 
   const btnStyle = {
     padding: "0.5rem 0.75rem",
@@ -250,34 +197,12 @@ function BankDetailPage() {
   };
 
   const secondaryBtnStyle = { ...btnStyle, background: "#fff", color: "#111827" };
-  const disabledBtnStyle = {
-    ...btnStyle,
-    background: "#f3f4f6",
-    color: "#9ca3af",
-    border: "1px solid #e5e7eb",
-    cursor: "not-allowed",
-  };
+  const disabledBtnStyle = { ...btnStyle, background: "#f3f4f6", color: "#9ca3af", border: "1px solid #e5e7eb", cursor: "not-allowed" };
 
-  const labelStyle = {
-    fontSize: "0.8rem",
-    color: "#6b7280",
-    marginBottom: "0.35rem",
-  };
-  const inputStyle = {
-    width: "100%",
-    padding: "0.55rem 0.65rem",
-    borderRadius: "10px",
-    border: "1px solid #d1d5db",
-    fontSize: "0.95rem",
-    background: "#fff",
-  };
+  const labelStyle = { fontSize: "0.8rem", color: "#6b7280", marginBottom: "0.35rem" };
+  const inputStyle = { width: "100%", padding: "0.55rem 0.65rem", borderRadius: "10px", border: "1px solid #d1d5db", fontSize: "0.95rem", background: "#fff" };
 
-  const grid2 = {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-    gap: "0.9rem",
-    marginTop: "0.75rem",
-  };
+  const grid2 = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "0.9rem", marginTop: "0.75rem" };
 
   // compact black bank block
   const compactBlock = {
@@ -288,58 +213,11 @@ function BankDetailPage() {
     border: "1px solid rgba(255,255,255,0.08)",
   };
 
-  const compactRow = {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "0.75rem",
-    flexWrap: "wrap",
-    alignItems: "center",
-  };
+  const compactRow = { display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" };
   const compactMuted = { color: "rgba(255,255,255,0.72)", fontSize: "0.88rem" };
 
-  const branchGrid = {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-    gap: "0.85rem",
-    marginTop: "0.85rem",
-  };
-  const branchTile = {
-    border: "1px solid #e5e7eb",
-    borderRadius: "14px",
-    padding: "0.85rem",
-    background: "#fff",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "0.75rem",
-  };
-
-  // ✅ assignments table styles
-  const tableStyle = { width: "100%", borderCollapse: "collapse" };
-  const thStyle = {
-    textAlign: "left",
-    fontSize: "0.8rem",
-    color: "#6b7280",
-    padding: "0.6rem",
-    borderBottom: "1px solid #e5e7eb",
-  };
-  const tdStyle = {
-    padding: "0.7rem 0.6rem",
-    borderBottom: "1px solid #f1f5f9",
-    fontSize: "0.92rem",
-  };
-
-  const pillStyle = (bg, fg) => ({
-    display: "inline-flex",
-    alignItems: "center",
-    padding: "0.25rem 0.6rem",
-    borderRadius: "999px",
-    fontSize: "0.78rem",
-    background: bg,
-    color: fg,
-    border: "1px solid rgba(0,0,0,0.06)",
-    fontWeight: 650,
-  });
+  const branchGrid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "0.85rem", marginTop: "0.85rem" };
+  const branchTile = { border: "1px solid #e5e7eb", borderRadius: "14px", padding: "0.85rem", background: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.75rem" };
 
   if (!userEmail) {
     return (
@@ -347,10 +225,7 @@ function BankDetailPage() {
         <div style={cardStyle}>
           <h2 style={{ marginTop: 0 }}>Not logged in</h2>
           <div style={{ color: "#6b7280" }}>Please login again.</div>
-          <button
-            style={{ ...btnStyle, marginTop: "0.75rem" }}
-            onClick={() => navigate("/login")}
-          >
+          <button style={{ ...btnStyle, marginTop: "0.75rem" }} onClick={() => navigate("/login")}>
             Go to Login
           </button>
         </div>
@@ -426,16 +301,20 @@ function BankDetailPage() {
               <div style={{ marginTop: "0.85rem" }}>
                 <div style={compactBlock}>
                   <div style={compactRow}>
-                    <div style={{ fontWeight: 900, fontSize: "1rem" }}>{bank.name}</div>
+                    <div style={{ fontWeight: 900, fontSize: "1rem" }}>
+                      {bank.name}
+                    </div>
                     <div style={compactMuted}>Bank ID: {id}</div>
                   </div>
 
                   <div style={{ marginTop: "0.6rem", display: "grid", gap: "0.35rem" }}>
                     <div style={compactMuted}>
-                      <b style={{ color: "#fff" }}>Account Name:</b> {bank.account_name || "—"}
+                      <b style={{ color: "#fff" }}>Account Name:</b>{" "}
+                      {bank.account_name || "—"}
                     </div>
                     <div style={compactMuted}>
-                      <b style={{ color: "#fff" }}>Account No:</b> {bank.account_number || "—"}
+                      <b style={{ color: "#fff" }}>Account No:</b>{" "}
+                      {bank.account_number || "—"}
                     </div>
                     <div style={compactMuted}>
                       <b style={{ color: "#fff" }}>IFSC:</b> {bank.ifsc || "—"}
@@ -498,9 +377,7 @@ function BankDetailPage() {
                   <input
                     style={inputStyle}
                     value={bankForm.account_bank_name}
-                    onChange={(e) =>
-                      setBankForm((p) => ({ ...p, account_bank_name: e.target.value }))
-                    }
+                    onChange={(e) => setBankForm((p) => ({ ...p, account_bank_name: e.target.value }))}
                   />
                 </div>
 
@@ -509,9 +386,7 @@ function BankDetailPage() {
                   <input
                     style={inputStyle}
                     value={bankForm.account_branch_name}
-                    onChange={(e) =>
-                      setBankForm((p) => ({ ...p, account_branch_name: e.target.value }))
-                    }
+                    onChange={(e) => setBankForm((p) => ({ ...p, account_branch_name: e.target.value }))}
                   />
                 </div>
 
@@ -529,9 +404,7 @@ function BankDetailPage() {
                   <textarea
                     style={{ ...inputStyle, minHeight: "90px", resize: "vertical" }}
                     value={bankForm.invoice_notes}
-                    onChange={(e) =>
-                      setBankForm((p) => ({ ...p, invoice_notes: e.target.value }))
-                    }
+                    onChange={(e) => setBankForm((p) => ({ ...p, invoice_notes: e.target.value }))}
                   />
                 </div>
               </div>
@@ -578,9 +451,7 @@ function BankDetailPage() {
                     <input
                       style={inputStyle}
                       value={branchForm.contact_name}
-                      onChange={(e) =>
-                        setBranchForm((p) => ({ ...p, contact_name: e.target.value }))
-                      }
+                      onChange={(e) => setBranchForm((p) => ({ ...p, contact_name: e.target.value }))}
                       placeholder="e.g., Branch Manager"
                     />
                   </div>
@@ -648,70 +519,14 @@ function BankDetailPage() {
             )}
           </div>
 
-          {/* ✅ Assignments table (This Bank) */}
+          {/* Assignments (This Bank) */}
           <div style={cardStyle}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
-              <div>
-                <h2 style={{ margin: 0 }}>Assignments (This Bank)</h2>
-                <div style={{ color: "#6b7280", fontSize: "0.9rem", marginTop: "0.25rem" }}>
-                  Read-only ledger. Click an ID to open full details.
-                </div>
-              </div>
-              <span style={pillStyle("#f3f4f6", "#111827")}>Count: {assignments.length}</span>
-            </div>
-
-            {assLoading && <div style={{ color: "#6b7280", marginTop: "0.8rem" }}>Loading assignments…</div>}
-
-            {assError && (
-              <div style={{ color: "#b45309", marginTop: "0.8rem", fontSize: "0.9rem" }}>
-                ⚠️ {assError}
-              </div>
-            )}
-
-            {!assLoading && !assError && assignments.length === 0 && (
-              <div style={{ color: "#6b7280", marginTop: "0.8rem" }}>
-                No assignments found for this bank yet.
-              </div>
-            )}
-
-            {!assLoading && !assError && assignments.length > 0 && (
-              <div style={{ marginTop: "0.8rem", overflowX: "auto" }}>
-                <table style={tableStyle}>
-                  <thead>
-                    <tr>
-                      <th style={thStyle}>Assignment ID</th>
-                      <th style={thStyle}>Created</th>
-                      <th style={thStyle}>Borrower / Client</th>
-                      <th style={thStyle}>Status</th>
-                      <th style={thStyle}>Fees</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {assignments.map((a) => (
-                      <tr key={a.id}>
-                        <td style={tdStyle}>
-                          <button
-                            style={{
-                              ...secondaryBtnStyle,
-                              padding: "0.25rem 0.55rem",
-                              borderRadius: "999px",
-                              fontSize: "0.85rem",
-                            }}
-                            onClick={() => navigate(`/assignments/${a.id}`)}
-                          >
-                            #{a.id}
-                          </button>
-                        </td>
-                        <td style={tdStyle}>{a.created_at ? String(a.created_at).slice(0, 10) : "—"}</td>
-                        <td style={tdStyle}>{a.borrower_name || a.valuer_client_name || "—"}</td>
-                        <td style={tdStyle}>{a.status || "—"}</td>
-                        <td style={tdStyle}>{typeof a.fees === "number" ? `₹ ${a.fees}` : "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <AssignmentsModule
+              scopeLabel="This Bank"
+              bankId={Number(id)}
+              authedFetch={authedFetch}
+              onOpenAssignment={(assignmentId) => navigate(`/assignments/${assignmentId}`)}
+            />
           </div>
         </>
       )}

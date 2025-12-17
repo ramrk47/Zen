@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getCurrentUser } from "../auth/currentUser";
+import AssignmentsModule from "../shared/AssignmentsModule";
 
 const API_BASE = "http://127.0.0.1:8000";
 
@@ -38,11 +39,6 @@ function BranchDetailPage() {
     expected_frequency_days: "",
     expected_weekly_revenue: "",
   });
-
-  // assignments table (bottom)
-  const [assLoading, setAssLoading] = useState(false);
-  const [assError, setAssError] = useState("");
-  const [assignments, setAssignments] = useState([]);
 
   const authedFetch = async (url, opts = {}) => {
     if (!userEmail) throw new Error("Missing user identity");
@@ -103,50 +99,6 @@ function BranchDetailPage() {
     };
 
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, userEmail]);
-
-  // ---------- Load assignments for this branch (bottom table) ----------
-  useEffect(() => {
-    const loadAssignments = async () => {
-      setAssLoading(true);
-      setAssError("");
-      setAssignments([]);
-
-      if (!userEmail) {
-        setAssError("Not authenticated.");
-        setAssLoading(false);
-        return;
-      }
-
-      try {
-        // ✅ This assumes you add filtering on backend later:
-        // GET /api/assignments?branch_id=123
-        const res = await authedFetch(
-          `${API_BASE}/api/assignments?branch_id=${encodeURIComponent(id)}`
-        );
-
-        if (!res.ok) {
-          // Don’t hard-fail the page — show a soft message.
-          const text = await res.text().catch(() => "");
-          throw new Error(
-            text || `Assignments endpoint not ready (HTTP ${res.status}).`
-          );
-        }
-
-        const data = await res.json();
-        setAssignments(Array.isArray(data) ? data : []);
-      } catch (e) {
-        setAssError(
-          e?.message ||
-            "Assignments table not connected yet. (We’ll wire the endpoint next.)"
-        );
-      } finally {
-        setAssLoading(false);
-      }
-    };
-
-    loadAssignments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, userEmail]);
 
@@ -252,20 +204,6 @@ function BranchDetailPage() {
     gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
     gap: "0.9rem",
     marginTop: "0.75rem",
-  };
-
-  const tableStyle = { width: "100%", borderCollapse: "collapse" };
-  const thStyle = {
-    textAlign: "left",
-    fontSize: "0.8rem",
-    color: "#6b7280",
-    padding: "0.6rem",
-    borderBottom: "1px solid #e5e7eb",
-  };
-  const tdStyle = {
-    padding: "0.7rem 0.6rem",
-    borderBottom: "1px solid #f1f5f9",
-    fontSize: "0.92rem",
   };
 
   if (!userEmail) {
@@ -503,76 +441,14 @@ function BranchDetailPage() {
             </div>
           </div>
 
-          {/* Assignments table (bottom) */}
+          {/* Assignments (This Branch) */}
           <div style={cardStyle}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
-              <div>
-                <h2 style={{ margin: 0 }}>Assignments (This Branch)</h2>
-                <div style={{ color: "#6b7280", fontSize: "0.9rem", marginTop: "0.25rem" }}>
-                  Read-only ledger. Click an ID to open full details.
-                </div>
-              </div>
-              <span style={pillStyle("#f3f4f6", "#111827")}>
-                Count: {assignments.length}
-              </span>
-            </div>
-
-            {assLoading && <div style={{ color: "#6b7280", marginTop: "0.8rem" }}>Loading assignments…</div>}
-
-            {assError && (
-              <div style={{ color: "#b45309", marginTop: "0.8rem", fontSize: "0.9rem" }}>
-                ⚠️ {assError}
-              </div>
-            )}
-
-            {!assLoading && !assError && assignments.length === 0 && (
-              <div style={{ color: "#6b7280", marginTop: "0.8rem" }}>
-                No assignments found for this branch yet.
-              </div>
-            )}
-
-            {!assLoading && !assError && assignments.length > 0 && (
-              <div style={{ marginTop: "0.8rem", overflowX: "auto" }}>
-                <table style={tableStyle}>
-                  <thead>
-                    <tr>
-                      <th style={thStyle}>Assignment ID</th>
-                      <th style={thStyle}>Created</th>
-                      <th style={thStyle}>Borrower / Client</th>
-                      <th style={thStyle}>Status</th>
-                      <th style={thStyle}>Fees</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {assignments.map((a) => (
-                      <tr key={a.id}>
-                        <td style={tdStyle}>
-                          <button
-                            style={{
-                              ...secondaryBtnStyle,
-                              padding: "0.25rem 0.55rem",
-                              borderRadius: "999px",
-                              fontSize: "0.85rem",
-                            }}
-                            onClick={() => navigate(`/assignments/${a.id}`)}
-                          >
-                            #{a.id}
-                          </button>
-                        </td>
-                        <td style={tdStyle}>{a.created_at ? String(a.created_at).slice(0, 10) : "—"}</td>
-                        <td style={tdStyle}>
-                          {(a.borrower_name || a.valuer_client_name || "—")}
-                        </td>
-                        <td style={tdStyle}>{a.status || "—"}</td>
-                        <td style={tdStyle}>
-                          {typeof a.fees === "number" ? `₹ ${a.fees}` : "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <AssignmentsModule
+              scopeLabel="This Branch"
+              branchId={Number(id)}
+              authedFetch={authedFetch}
+              onOpenAssignment={(assignmentId) => navigate(`/assignments/${assignmentId}`)}
+            />
           </div>
         </>
       )}
