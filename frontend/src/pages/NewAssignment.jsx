@@ -1,5 +1,5 @@
 // src/pages/NewAssignment.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getCurrentUser } from "../auth/currentUser";
 
@@ -26,41 +26,19 @@ function NewAssignmentPage() {
   // core fields
   const [caseType, setCaseType] = useState("BANK");
 
-  // Master data lists
+  // master lists
   const [banks, setBanks] = useState([]);
   const [branches, setBranches] = useState([]);
   const [clients, setClients] = useState([]);
   const [propertyTypes, setPropertyTypes] = useState([]);
 
-  // Selected master data IDs
+  // selected IDs
   const [bankId, setBankId] = useState("");
   const [branchId, setBranchId] = useState("");
   const [clientId, setClientId] = useState("");
   const [propertyTypeId, setPropertyTypeId] = useState("");
 
-  // allow quick-typed client name (does NOT create master record)
-  const [newClientName, setNewClientName] = useState("");
-
-  // Derived objects
-  const selectedBank = useMemo(
-    () => banks.find((b) => String(b.id) === String(bankId)) || null,
-    [banks, bankId]
-  );
-  const selectedBranch = useMemo(
-    () => branches.find((br) => String(br.id) === String(branchId)) || null,
-    [branches, branchId]
-  );
-  const selectedClient = useMemo(
-    () => clients.find((c) => String(c.id) === String(clientId)) || null,
-    [clients, clientId]
-  );
-  const selectedPropertyType = useMemo(
-    () =>
-      propertyTypes.find((p) => String(p.id) === String(propertyTypeId)) || null,
-    [propertyTypes, propertyTypeId]
-  );
-
-  // Other assignment fields
+  // other fields
   const [borrowerName, setBorrowerName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
@@ -68,13 +46,13 @@ function NewAssignmentPage() {
   const [builtupArea, setBuiltupArea] = useState("");
   const [status, setStatus] = useState("PENDING");
 
-  // Money (ADMIN ONLY UI)
+  // admin-only fields (UI)
   const [fees, setFees] = useState("");
   const [isPaid, setIsPaid] = useState(false);
 
   const [notes, setNotes] = useState("");
 
-  // "provision" fields
+  // UI placeholders
   const [locationLink, setLocationLink] = useState("");
   const [files, setFiles] = useState([]);
 
@@ -83,6 +61,11 @@ function NewAssignmentPage() {
   const [error, setError] = useState("");
   const [masterError, setMasterError] = useState("");
 
+  // upload UI
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 });
+  const [uploadError, setUploadError] = useState("");
+
   const authedFetch = async (url, opts = {}) => {
     if (!userEmail) throw new Error("Missing user identity");
     const headers = {
@@ -90,6 +73,45 @@ function NewAssignmentPage() {
       "X-User-Email": userEmail,
     };
     return fetch(url, { ...opts, headers });
+  };
+
+  const uploadOneFile = async (assignmentId, file) => {
+    const form = new FormData();
+    // backend expects field name: "uploaded"
+    form.append("uploaded", file);
+
+    const res = await authedFetch(`${API_BASE}/api/files/upload/${assignmentId}`, {
+      method: "POST",
+      body: form,
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Upload failed (${res.status}) ${text}`);
+    }
+    return res.json().catch(() => ({}));
+  };
+
+  const uploadSelectedFiles = async (assignmentId) => {
+    const list = Array.isArray(files) ? files : [];
+    if (list.length === 0) return;
+
+    setUploadingFiles(true);
+    setUploadError("");
+    setUploadProgress({ done: 0, total: list.length });
+
+    try {
+      // sequential = stable
+      for (let i = 0; i < list.length; i += 1) {
+        await uploadOneFile(assignmentId, list[i]);
+        setUploadProgress({ done: i + 1, total: list.length });
+      }
+    } catch (e) {
+      console.error("File upload error:", e);
+      setUploadError("Some files failed to upload. You can retry from the Assignment page.");
+    } finally {
+      setUploadingFiles(false);
+    }
   };
 
   // ---------- Master data fetch ----------
@@ -112,10 +134,7 @@ function NewAssignmentPage() {
         ]);
 
         if (!banksRes.ok || !clientsRes.ok || !propRes.ok) {
-          setMasterError(
-            "Failed to load master data. Check backend /api/master/* endpoints."
-          );
-          setLoadingMaster(false);
+          setMasterError("Failed to load master data. Check backend /api/master/* endpoints.");
           return;
         }
 
@@ -144,27 +163,20 @@ function NewAssignmentPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEmail]);
 
-  // Load branches when bankId changes (dependent dropdown)
+  // Load branches when bankId changes
   useEffect(() => {
     const loadBranches = async () => {
       setBranches([]);
       setBranchId("");
 
       if (!bankId) return;
-
-      if (!userEmail) {
-        setError("Missing user identity. Please login again.");
-        return;
-      }
+      if (!userEmail) return;
 
       try {
         const res = await authedFetch(
           `${API_BASE}/api/master/branches?bank_id=${encodeURIComponent(bankId)}`
         );
-        if (!res.ok) {
-          console.error("Failed to load branches", res.status);
-          return;
-        }
+        if (!res.ok) return;
         const json = await res.json();
         setBranches(Array.isArray(json) ? json : []);
       } catch (e) {
@@ -176,13 +188,13 @@ function NewAssignmentPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bankId, userEmail]);
 
-  // Reset party selections when caseType changes (prevents wrong payload)
+  // Reset selections when caseType changes
   useEffect(() => {
     setError("");
+    setUploadError("");
 
     if (caseType === "BANK") {
       setClientId("");
-      setNewClientName("");
     } else {
       setBankId("");
       setBranchId("");
@@ -190,7 +202,7 @@ function NewAssignmentPage() {
     }
   }, [caseType]);
 
-  // If not admin, hard-lock money states to safe defaults
+  // If not admin, hard-lock money states
   useEffect(() => {
     if (!isAdmin) {
       setFees("");
@@ -207,6 +219,8 @@ function NewAssignmentPage() {
     e.preventDefault();
     setSaving(true);
     setError("");
+    setUploadError("");
+    setUploadProgress({ done: 0, total: 0 });
 
     if (!userEmail) {
       setSaving(false);
@@ -215,7 +229,6 @@ function NewAssignmentPage() {
     }
 
     try {
-      // --- Validate minimum required selections ---
       if (caseType === "BANK") {
         if (!bankId) {
           setError("Please select a Bank.");
@@ -228,9 +241,8 @@ function NewAssignmentPage() {
           return;
         }
       } else {
-        const typed = (newClientName || "").trim();
-        if (!clientId && !typed) {
-          setError("Please select an existing Client OR type a new Client name.");
+        if (!clientId) {
+          setError("Please select a Client.");
           setSaving(false);
           return;
         }
@@ -242,11 +254,8 @@ function NewAssignmentPage() {
         bank_id: caseType === "BANK" ? Number(bankId) : null,
         branch_id: caseType === "BANK" ? Number(branchId) : null,
 
-        client_id: caseType !== "BANK" && clientId ? Number(clientId) : null,
-        valuer_client_name:
-          caseType !== "BANK" && !clientId
-            ? (newClientName || "").trim() || null
-            : null,
+        client_id: caseType !== "BANK" ? Number(clientId) : null,
+        valuer_client_name: null,
 
         property_type_id: propertyTypeId ? Number(propertyTypeId) : null,
 
@@ -257,9 +266,11 @@ function NewAssignmentPage() {
         builtup_area: builtupArea ? Number(builtupArea) : null,
         status,
         notes: notes || null,
+
+        // UI-only for now (backend can ignore safely if schema doesn’t include it)
+        // location_link: locationLink || null,
       };
 
-      // ADMIN ONLY: include money fields
       if (isAdmin) {
         payload.fees = fees ? Number(fees) : 0;
         payload.is_paid = isPaid;
@@ -272,17 +283,22 @@ function NewAssignmentPage() {
       });
 
       if (!res.ok) {
-        console.error("Create failed", res.status);
         const text = await res.text();
-        console.error("Response body:", text);
+        console.error("Create failed", res.status, text);
         setError("Failed to create assignment. Check console for details.");
         setSaving(false);
         return;
       }
 
       const created = await res.json();
-      if (created && created.id) navigate(`/assignments/${created.id}`);
-      else navigate("/assignments");
+
+      if (created?.id) {
+        // upload selected files before navigating
+        await uploadSelectedFiles(created.id);
+        navigate(`/assignments/${created.id}`);
+      } else {
+        navigate("/assignments");
+      }
     } catch (err) {
       console.error("Error creating assignment", err);
       setError("Error creating assignment.");
@@ -293,7 +309,6 @@ function NewAssignmentPage() {
 
   // ------- styles -------
   const pageStyle = { maxWidth: "900px", margin: "0 auto" };
-
   const cardStyle = {
     backgroundColor: "#ffffff",
     borderRadius: "8px",
@@ -301,13 +316,7 @@ function NewAssignmentPage() {
     padding: "1rem 1.25rem",
     marginTop: "0.75rem",
   };
-
-  const headingStyle = {
-    fontSize: "1.3rem",
-    fontWeight: 600,
-    marginBottom: "0.25rem",
-  };
-
+  const headingStyle = { fontSize: "1.3rem", fontWeight: 600, marginBottom: "0.25rem" };
   const labelStyle = {
     fontSize: "0.8rem",
     textTransform: "uppercase",
@@ -315,7 +324,6 @@ function NewAssignmentPage() {
     letterSpacing: "0.04em",
     marginBottom: "0.2rem",
   };
-
   const inputStyle = {
     width: "100%",
     padding: "0.4rem 0.5rem",
@@ -324,21 +332,14 @@ function NewAssignmentPage() {
     border: "1px solid #d1d5db",
     boxSizing: "border-box",
   };
-
   const textareaStyle = { ...inputStyle, minHeight: "90px", resize: "vertical" };
   const selectStyle = { ...inputStyle, backgroundColor: "#fff" };
-
   const gridTwoCol = {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: "0.75rem 1.5rem",
   };
-
-  const sectionTitleStyle = {
-    fontSize: "1rem",
-    fontWeight: 600,
-    marginBottom: "0.5rem",
-  };
+  const sectionTitleStyle = { fontSize: "1rem", fontWeight: 600, marginBottom: "0.5rem" };
   const hintStyle = { fontSize: "0.75rem", color: "#6b7280", marginTop: "0.2rem" };
   const filesListStyle = { fontSize: "0.8rem", color: "#4b5563", marginTop: "0.4rem" };
 
@@ -362,18 +363,9 @@ function NewAssignmentPage() {
 
       <h1 style={headingStyle}>New Assignment</h1>
       <p style={{ fontSize: "0.85rem", color: "#6b7280" }}>
-        Banks/Branches/Property Types are controlled. Client can be selected or typed quickly.
+        Banks/Branches/Clients/Property Types are controlled.
         {isAdmin ? " (Admin: Fees visible)" : " (Employee: Fees hidden)"}
       </p>
-
-      {!userEmail && (
-        <div style={{ ...cardStyle, borderColor: "#fca5a5", backgroundColor: "#fff1f2" }}>
-          <div style={{ fontWeight: 600, marginBottom: "0.25rem" }}>Not logged in</div>
-          <div style={{ fontSize: "0.85rem", color: "#7f1d1d" }}>
-            Missing user identity. Please login again.
-          </div>
-        </div>
-      )}
 
       {masterError && (
         <div style={{ ...cardStyle, borderColor: "#fca5a5", backgroundColor: "#fff1f2" }}>
@@ -384,7 +376,7 @@ function NewAssignmentPage() {
       )}
 
       <form onSubmit={handleSubmit}>
-        {/* Basic info */}
+        {/* Basic */}
         <div style={cardStyle}>
           <h2 style={sectionTitleStyle}>Basic Details</h2>
 
@@ -398,11 +390,7 @@ function NewAssignmentPage() {
               >
                 {CASE_TYPE_OPTIONS.map((c) => (
                   <option key={c} value={c}>
-                    {c === "EXTERNAL_VALUER"
-                      ? "External Valuer"
-                      : c === "DIRECT_CLIENT"
-                      ? "Direct Client"
-                      : c}
+                    {c === "EXTERNAL_VALUER" ? "External Valuer" : c === "DIRECT_CLIENT" ? "Direct Client" : c}
                   </option>
                 ))}
               </select>
@@ -410,11 +398,7 @@ function NewAssignmentPage() {
 
             <div>
               <div style={labelStyle}>Status</div>
-              <select
-                style={selectStyle}
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-              >
+              <select style={selectStyle} value={status} onChange={(e) => setStatus(e.target.value)}>
                 {STATUS_OPTIONS.map((s) => (
                   <option key={s} value={s}>
                     {s === "PENDING"
@@ -471,9 +455,7 @@ function NewAssignmentPage() {
                     onChange={(e) => setBranchId(e.target.value)}
                     disabled={!userEmail || !bankId}
                   >
-                    <option value="">
-                      {bankId ? "-- Select Branch --" : "-- Select Bank first --"}
-                    </option>
+                    <option value="">{bankId ? "-- Select Branch --" : "-- Select Bank first --"}</option>
                     {branches.map((br) => (
                       <option key={br.id} value={br.id}>
                         {br.name}
@@ -483,72 +465,33 @@ function NewAssignmentPage() {
                 </div>
               </>
             ) : (
-              <>
-                <div>
-                  <div style={labelStyle}>
-                    {caseType === "EXTERNAL_VALUER"
-                      ? "External Valuer (Select Existing)"
-                      : "Direct Client (Select Existing)"}
-                  </div>
-                  <select
-                    style={selectStyle}
-                    value={clientId}
-                    onChange={(e) => {
-                      setClientId(e.target.value);
-                      if (e.target.value) setNewClientName("");
-                    }}
-                    disabled={!userEmail}
-                  >
-                    <option value="">-- Select --</option>
-                    {clients.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                  <div style={hintStyle}>
-                    If not in list, type a new name below (fast entry).
-                  </div>
-                </div>
-
-                <div>
-                  <div style={labelStyle}>Or Type New Client Name</div>
-                  <input
-                    style={inputStyle}
-                    value={newClientName}
-                    onChange={(e) => {
-                      setNewClientName(e.target.value);
-                      if (e.target.value.trim()) setClientId("");
-                    }}
-                    placeholder="e.g. Ramesh Patil / XYZ Enterprises"
-                    disabled={!userEmail}
-                  />
-                  <div style={hintStyle}>
-                    Saved as text on assignment. Admin can later add to Master Clients.
-                  </div>
-                </div>
-              </>
+              <div>
+                <div style={labelStyle}>{caseType === "EXTERNAL_VALUER" ? "External Valuer (Client)" : "Direct Client"}</div>
+                <select
+                  style={selectStyle}
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  disabled={!userEmail}
+                >
+                  <option value="">-- Select Client --</option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <div style={hintStyle}>If missing: add it in Master Clients (admin).</div>
+              </div>
             )}
 
             <div>
               <div style={labelStyle}>Borrower Name</div>
-              <input
-                style={inputStyle}
-                value={borrowerName}
-                onChange={(e) => setBorrowerName(e.target.value)}
-                disabled={!userEmail}
-              />
+              <input style={inputStyle} value={borrowerName} onChange={(e) => setBorrowerName(e.target.value)} disabled={!userEmail} />
             </div>
 
             <div>
               <div style={labelStyle}>Phone</div>
-              <input
-                style={inputStyle}
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="10-digit mobile"
-                disabled={!userEmail}
-              />
+              <input style={inputStyle} value={phone} onChange={(e) => setPhone(e.target.value)} disabled={!userEmail} />
             </div>
           </div>
         </div>
@@ -560,23 +503,12 @@ function NewAssignmentPage() {
           <div style={gridTwoCol}>
             <div>
               <div style={labelStyle}>Address</div>
-              <textarea
-                style={textareaStyle}
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="Property address"
-                disabled={!userEmail}
-              />
+              <textarea style={textareaStyle} value={address} onChange={(e) => setAddress(e.target.value)} disabled={!userEmail} />
             </div>
 
             <div>
               <div style={labelStyle}>Property Type</div>
-              <select
-                style={selectStyle}
-                value={propertyTypeId}
-                onChange={(e) => setPropertyTypeId(e.target.value)}
-                disabled={!userEmail}
-              >
+              <select style={selectStyle} value={propertyTypeId} onChange={(e) => setPropertyTypeId(e.target.value)} disabled={!userEmail}>
                 <option value="">-- Select Property Type --</option>
                 {propertyTypes.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -584,37 +516,21 @@ function NewAssignmentPage() {
                   </option>
                 ))}
               </select>
-              <div style={hintStyle}>Controlled to avoid duplicates.</div>
             </div>
 
             <div>
               <div style={labelStyle}>Land Area (sqft)</div>
-              <input
-                type="number"
-                style={inputStyle}
-                value={landArea}
-                onChange={(e) => setLandArea(e.target.value)}
-                placeholder="e.g. 1200"
-                disabled={!userEmail}
-              />
+              <input type="number" style={inputStyle} value={landArea} onChange={(e) => setLandArea(e.target.value)} disabled={!userEmail} />
             </div>
 
             <div>
               <div style={labelStyle}>Built-up Area (sqft)</div>
-              <input
-                type="number"
-                style={inputStyle}
-                value={builtupArea}
-                onChange={(e) => setBuiltupArea(e.target.value)}
-                placeholder="e.g. 900"
-                disabled={!userEmail}
-              />
-              <div style={hintStyle}>Multi-floor built-up area comes next (Step 3).</div>
+              <input type="number" style={inputStyle} value={builtupArea} onChange={(e) => setBuiltupArea(e.target.value)} disabled={!userEmail} />
             </div>
           </div>
         </div>
 
-        {/* Money + notes */}
+        {/* Fees & Notes */}
         <div style={cardStyle}>
           <h2 style={sectionTitleStyle}>Fees & Notes</h2>
 
@@ -622,32 +538,13 @@ function NewAssignmentPage() {
             <div style={gridTwoCol}>
               <div>
                 <div style={labelStyle}>Fees (₹)</div>
-                <input
-                  type="number"
-                  style={inputStyle}
-                  value={fees}
-                  onChange={(e) => setFees(e.target.value)}
-                  placeholder="e.g. 1500"
-                  disabled={!userEmail}
-                />
+                <input type="number" style={inputStyle} value={fees} onChange={(e) => setFees(e.target.value)} disabled={!userEmail} />
               </div>
 
               <div>
                 <div style={labelStyle}>Paid?</div>
-                <label
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.4rem",
-                    fontSize: "0.9rem",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isPaid}
-                    onChange={(e) => setIsPaid(e.target.checked)}
-                    disabled={!userEmail}
-                  />
+                <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.9rem" }}>
+                  <input type="checkbox" checked={isPaid} onChange={(e) => setIsPaid(e.target.checked)} disabled={!userEmail} />
                   Mark as paid
                 </label>
               </div>
@@ -658,13 +555,7 @@ function NewAssignmentPage() {
 
           <div style={{ marginTop: "0.75rem" }}>
             <div style={labelStyle}>Internal Notes</div>
-            <textarea
-              style={textareaStyle}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Any extra context about this assignment…"
-              disabled={!userEmail}
-            />
+            <textarea style={textareaStyle} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={!userEmail} />
           </div>
         </div>
 
@@ -675,20 +566,24 @@ function NewAssignmentPage() {
           <div style={gridTwoCol}>
             <div>
               <div style={labelStyle}>Location Link</div>
-              <input
-                style={inputStyle}
-                value={locationLink}
-                onChange={(e) => setLocationLink(e.target.value)}
-                placeholder="Google Maps link or GPS note"
-                disabled={!userEmail}
-              />
-              <div style={hintStyle}>Stored in UI for now. We’ll wire it to backend later.</div>
+              <input style={inputStyle} value={locationLink} onChange={(e) => setLocationLink(e.target.value)} disabled={!userEmail} />
+              <div style={hintStyle}>UI only for now. We’ll wire it later.</div>
             </div>
 
             <div>
               <div style={labelStyle}>Attach Files (photos, docs)</div>
-              <input type="file" multiple onChange={handleFilesChange} disabled={!userEmail} />
-              <div style={hintStyle}>Upload endpoint comes later.</div>
+              <input type="file" multiple onChange={handleFilesChange} disabled={!userEmail || saving || uploadingFiles} />
+              <div style={hintStyle}>Files will upload automatically after you click <b>Create Assignment</b>.</div>
+
+              {uploadingFiles && (
+                <div style={{ ...hintStyle, marginTop: "0.35rem" }}>
+                  Uploading: {uploadProgress.done}/{uploadProgress.total}
+                </div>
+              )}
+
+              {uploadError && (
+                <div style={{ marginTop: "0.35rem", color: "#b91c1c", fontSize: "0.85rem" }}>{uploadError}</div>
+              )}
 
               {files.length > 0 && (
                 <div style={filesListStyle}>
@@ -707,34 +602,24 @@ function NewAssignmentPage() {
         </div>
 
         {/* Save */}
-        <div
-          style={{
-            ...cardStyle,
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <div>
-            {error && <span style={{ color: "red", fontSize: "0.85rem" }}>{error}</span>}
-          </div>
-          <div>
-            <button
-              type="submit"
-              disabled={saving || !userEmail}
-              style={{
-                padding: "0.4rem 1rem",
-                fontSize: "0.9rem",
-                borderRadius: "999px",
-                border: "none",
-                backgroundColor: saving ? "#9ca3af" : "#16a34a",
-                color: "#ffffff",
-                cursor: saving ? "default" : "pointer",
-              }}
-            >
-              {saving ? "Saving…" : "Create Assignment"}
-            </button>
-          </div>
+        <div style={{ ...cardStyle, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>{error && <span style={{ color: "red", fontSize: "0.85rem" }}>{error}</span>}</div>
+
+          <button
+            type="submit"
+            disabled={saving || uploadingFiles || !userEmail}
+            style={{
+              padding: "0.4rem 1rem",
+              fontSize: "0.9rem",
+              borderRadius: "999px",
+              border: "none",
+              backgroundColor: saving || uploadingFiles ? "#9ca3af" : "#16a34a",
+              color: "#ffffff",
+              cursor: saving || uploadingFiles ? "default" : "pointer",
+            }}
+          >
+            {saving ? "Saving…" : uploadingFiles ? "Uploading…" : "Create Assignment"}
+          </button>
         </div>
       </form>
     </div>

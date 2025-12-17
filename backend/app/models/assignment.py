@@ -1,4 +1,3 @@
-# backend/app/models/assignment.py
 from datetime import datetime
 
 from sqlalchemy import (
@@ -25,25 +24,42 @@ class Assignment(Base):
     # Public-facing code, e.g. "VAL/2025/0012"
     assignment_code = Column(String(64), unique=True, index=True, nullable=False)
 
-    # How this case came in
     # "BANK" / "EXTERNAL_VALUER" / "DIRECT_CLIENT"
     case_type = Column(String(32), nullable=False, default="BANK")
 
     # -------------------------
-    # NEW: Master-data IDs
-    # (nullable depending on case_type)
+    # Master-data IDs
     # -------------------------
-    bank_id = Column(Integer, ForeignKey("banks.id", ondelete="SET NULL"), nullable=True, index=True)
-    branch_id = Column(Integer, ForeignKey("branches.id", ondelete="SET NULL"), nullable=True, index=True)
+    bank_id = Column(
+        Integer,
+        ForeignKey("banks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    branch_id = Column(
+        Integer,
+        ForeignKey("branches.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
-    # For DIRECT_CLIENT and EXTERNAL_VALUER (for now we use the same Clients table)
-    client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True, index=True)
+    # For DIRECT_CLIENT and EXTERNAL_VALUER (same Clients table for now)
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
-    property_type_id = Column(Integer, ForeignKey("property_types.id", ondelete="SET NULL"), nullable=True, index=True)
+    property_type_id = Column(
+        Integer,
+        ForeignKey("property_types.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     # -------------------------
-    # Legacy string fields (keep for backward compatibility for now)
-    # Frontend currently sends names; later we’ll move entirely to IDs
+    # Legacy string fields (kept for backward compatibility)
     # -------------------------
     bank_name = Column(String(128), nullable=True)
     branch_name = Column(String(128), nullable=True)
@@ -52,11 +68,10 @@ class Assignment(Base):
 
     borrower_name = Column(String(128), nullable=True)
     phone = Column(String(32), nullable=True)
-
     address = Column(Text, nullable=True)
 
     land_area = Column(Float, nullable=True)      # sqft
-    builtup_area = Column(Float, nullable=True)   # sqft (multi-floor comes next)
+    builtup_area = Column(Float, nullable=True)   # sqft
 
     status = Column(String(32), nullable=False, default="SITE_VISIT")
 
@@ -70,7 +85,19 @@ class Assignment(Base):
 
     notes = Column(Text, nullable=True)
 
-    files = relationship("File", back_populates="assignment", cascade="all, delete-orphan")
+    # Files attached to this assignment
+    files = relationship(
+        "File",
+        back_populates="assignment",
+        cascade="all, delete-orphan",
+    )
+
+    # NEW: timeline / audit trail
+    activities = relationship(
+        "Activity",
+        back_populates="assignment",
+        cascade="all, delete-orphan",
+    )
 
     # Optional relationships (not required yet, but useful later)
     bank = relationship("Bank", foreign_keys=[bank_id])

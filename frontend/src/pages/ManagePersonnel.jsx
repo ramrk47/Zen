@@ -8,7 +8,7 @@ const API_BASE = "http://127.0.0.1:8000";
 function ManagePersonnelPage() {
   const navigate = useNavigate();
   const user = getCurrentUser();
-  const isAdmin = user?.role === "ADMIN";
+  const isAdmin = (user?.role || "").toUpperCase() === "ADMIN";
 
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
@@ -70,11 +70,7 @@ function ManagePersonnelPage() {
   };
 
   const canSubmit = useMemo(() => {
-    return (
-      !!email.trim() &&
-      !!password.trim() &&
-      (role === "ADMIN" || role === "EMPLOYEE")
-    );
+    return !!email.trim() && !!password.trim() && (role === "ADMIN" || role === "EMPLOYEE");
   }, [email, password, role]);
 
   const handleCreateUser = async (e) => {
@@ -86,9 +82,8 @@ function ManagePersonnelPage() {
       return;
     }
 
-    const adminPassword = window.prompt("Enter your admin password to confirm:");
-    if (!adminPassword) {
-      setStatus("❌ Cancelled (admin password required).");
+    if (!user?.email) {
+      setStatus("❌ Missing logged-in admin identity. Please login again.");
       return;
     }
 
@@ -98,11 +93,10 @@ function ManagePersonnelPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Admin-Email": user.email,
-          "X-Admin-Password": adminPassword,
+          "X-User-Email": user.email,
         },
         body: JSON.stringify({
-          email: email.trim(),
+          email: email.trim().toLowerCase(),
           full_name: fullName.trim() ? fullName.trim() : null,
           password,
           role,
@@ -145,7 +139,9 @@ function ManagePersonnelPage() {
 
       {!isAdmin ? (
         <div style={cardStyle}>
-          <p style={{ margin: 0, color: "#6b7280" }}>You are not an admin. This page is restricted.</p>
+          <p style={{ margin: 0, color: "#6b7280" }}>
+            You are not an admin. This page is restricted.
+          </p>
         </div>
       ) : (
         <div style={cardStyle}>

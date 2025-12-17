@@ -1,4 +1,3 @@
-// src/pages/Settings.jsx
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { getCurrentUser } from "../auth/currentUser";
@@ -88,11 +87,11 @@ function SettingsPage() {
       )}
 
       <div style={gridStyle}>
+        {/* PERSONNEL */}
         <div style={cardStyle}>
           <div style={cardTitleStyle}>Manage Personnel</div>
           <div style={cardDescStyle}>
-            Create employee/admin accounts now. Later: deactivate users, reset passwords, role changes,
-            permissions.
+            Create employee/admin accounts. Later: deactivate users, reset passwords, role changes.
           </div>
           {isAdmin ? (
             <button style={btnStyle} onClick={() => navigate("/settings/personnel")}>
@@ -105,30 +104,45 @@ function SettingsPage() {
           )}
         </div>
 
+        {/* BANKS & BRANCHES */}
         <div style={cardStyle}>
           <div style={cardTitleStyle}>Banks & Branches</div>
           <div style={cardDescStyle}>
-            Tagged bank/branch lists + bank-specific invoice account details. (Coming soon)
+            Manage banks, bank account details, and branches with contacts & addresses.
           </div>
-          <button style={disabledBtnStyle} disabled>
-            Coming soon
-          </button>
+          {isAdmin ? (
+            <button style={btnStyle} onClick={() => navigate("/settings/banks")}>
+              Open
+            </button>
+          ) : (
+            <button style={disabledBtnStyle} disabled>
+              Admin only
+            </button>
+          )}
         </div>
 
+        {/* MASTER DATA */}
         <div style={cardStyle}>
-          <div style={cardTitleStyle}>Invoice Defaults</div>
+          <div style={cardTitleStyle}>Master Data</div>
           <div style={cardDescStyle}>
-            GST rates, templates, and your Excel-based automated invoices integration. (Coming soon)
+            Maintain Clients and Property Types used in New Assignment dropdowns.
           </div>
-          <button style={disabledBtnStyle} disabled>
-            Coming soon
-          </button>
+          {isAdmin ? (
+            <button style={btnStyle} onClick={() => navigate("/settings/master")}>
+              Open
+            </button>
+          ) : (
+            <button style={disabledBtnStyle} disabled>
+              Admin only
+            </button>
+          )}
         </div>
 
+        {/* FUTURE */}
         <div style={cardStyle}>
           <div style={cardTitleStyle}>Alerts & Automation</div>
           <div style={cardDescStyle}>
-            Branch frequency + revenue drop alerts, and future automation hooks. (Coming later)
+            Branch frequency alerts, revenue tracking, and automation hooks.
           </div>
           <button style={disabledBtnStyle} disabled>
             Coming later
@@ -137,7 +151,7 @@ function SettingsPage() {
       </div>
 
       <div style={{ fontSize: "0.85rem", color: "#6b7280", marginTop: "0.5rem" }}>
-        Next we’ll implement tagging (banks/branches/property/client), then invoices.
+        Flow: Settings → Banks → Bank → Branches.
       </div>
     </div>
   );

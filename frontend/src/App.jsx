@@ -1,3 +1,4 @@
+// src/App.jsx
 import React from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 
@@ -11,6 +12,12 @@ import AssignmentDetailPage from "./pages/AssignmentDetail";
 import InvoicesPage from "./pages/Invoices";
 import SettingsPage from "./pages/Settings";
 import ManagePersonnelPage from "./pages/ManagePersonnel";
+import MasterDataPage from "./pages/MasterData";
+
+import BanksPage from "./pages/Banks";
+import BankDetailPage from "./pages/BankDetail";
+import BranchDetailPage from "./pages/BranchDetail"; // ✅ ADD THIS
+
 import { getCurrentUser } from "./auth/currentUser";
 
 function App() {
@@ -31,15 +38,18 @@ function App() {
     );
   }
 
+  // ✅ RESTORED LAYOUT STYLES
   const shellStyle = {
     display: "flex",
     minHeight: "100vh",
-    fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+    fontFamily:
+      "system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+    backgroundColor: "#f3f4f6",
   };
 
   const sidebarWrapperStyle = {
     width: "220px",
-    borderRight: "1px solid #ddd",
+    borderRight: "1px solid #e5e7eb",
     backgroundColor: "#f7f7f7",
   };
 
@@ -74,8 +84,17 @@ function App() {
             <Route path="/assignments/:id" element={<AssignmentDetailPage />} />
 
             <Route path="/invoices" element={<InvoicesPage />} />
+
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/settings/personnel" element={<ManagePersonnelPage />} />
+            <Route path="/settings/master" element={<MasterDataPage />} />
+
+            {/* Banks */}
+            <Route path="/settings/banks" element={<BanksPage />} />
+            <Route path="/settings/banks/:id" element={<BankDetailPage />} />
+
+            {/* ✅ Branch Detail */}
+            <Route path="/settings/branches/:id" element={<BranchDetailPage />} />
 
             <Route path="*" element={<Navigate to="/home" replace />} />
           </Routes>

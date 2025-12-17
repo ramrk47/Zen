@@ -71,7 +71,11 @@ function getFileLabel(f) {
 }
 
 function getFileHref(f) {
-  return f?.url || f?.file_url || f?.download_url || f?.path || f?.s3_url || "";
+  const href = f?.url || f?.file_url || f?.download_url || f?.path || f?.s3_url || "";
+  if (!href) return "";
+  if (href.startsWith("/uploads/")) return `http://127.0.0.1:8000${href}`;
+  if (href.startsWith("uploads/")) return `http://127.0.0.1:8000/${href}`;
+  return href;
 }
 
 function AssignmentsPage() {
