@@ -1,4 +1,3 @@
-// src/pages/Banks.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getCurrentUser } from "../auth/currentUser";
@@ -16,17 +15,25 @@ function BanksPage() {
   const [banksError, setBanksError] = useState("");
 
   const [selectedId, setSelectedId] = useState(null);
+  const [bankSearch, setBankSearch] = useState("");
 
   const [branches, setBranches] = useState([]);
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [branchesError, setBranchesError] = useState("");
 
-  // ✅ NEW: bank + branch summary
+  // bank summary
   const [bankSummary, setBankSummary] = useState(null);
   const [bankSummaryLoading, setBankSummaryLoading] = useState(false);
 
+  // branch summaries map: { [branchId]: {loading:boolean, data:any|null} }
   const [branchSummaryMap, setBranchSummaryMap] = useState({});
   const [branchSummaryLoading, setBranchSummaryLoading] = useState(false);
+
+  // ✅ Add bank modal state
+  const [showAddBank, setShowAddBank] = useState(false);
+  const [newBankName, setNewBankName] = useState("");
+  const [creatingBank, setCreatingBank] = useState(false);
+  const [createBankError, setCreateBankError] = useState("");
 
   const authedFetch = async (url, opts = {}) => {
     if (!userEmail) throw new Error("Not authenticated");
@@ -34,31 +41,31 @@ function BanksPage() {
     return fetch(url, { ...opts, headers });
   };
 
+  const loadBanks = async () => {
+    setBanksLoading(true);
+    setBanksError("");
+
+    try {
+      const res = await authedFetch(`${API_BASE}/api/master/banks`);
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      const arr = Array.isArray(data) ? data : [];
+      arr.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+      setBanks(arr);
+
+      if (!selectedId && arr.length > 0) setSelectedId(arr[0].id);
+    } catch (e) {
+      setBanksError(e?.message || "Failed to load banks");
+    } finally {
+      setBanksLoading(false);
+    }
+  };
+
   // Load banks
   useEffect(() => {
-    const loadBanks = async () => {
-      setBanksLoading(true);
-      setBanksError("");
-
-      try {
-        const res = await authedFetch(`${API_BASE}/api/master/banks`);
-        if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          throw new Error(text || `HTTP ${res.status}`);
-        }
-        const data = await res.json();
-        const arr = Array.isArray(data) ? data : [];
-        arr.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
-        setBanks(arr);
-
-        if (!selectedId && arr.length > 0) setSelectedId(arr[0].id);
-      } catch (e) {
-        setBanksError(e?.message || "Failed to load banks");
-      } finally {
-        setBanksLoading(false);
-      }
-    };
-
     if (userEmail) loadBanks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEmail]);
@@ -68,12 +75,19 @@ function BanksPage() {
     [banks, selectedId]
   );
 
+  const filteredBanks = useMemo(() => {
+    const q = (bankSearch || "").trim().toLowerCase();
+    if (!q) return banks;
+    return banks.filter((b) => String(b.name || "").toLowerCase().includes(q));
+  }, [banks, bankSearch]);
+
   // Load branches for selected bank
   useEffect(() => {
     const loadBranches = async () => {
       setBranches([]);
       setBranchesError("");
       setBranchSummaryMap({});
+      setBranchSummaryLoading(false);
 
       if (!selectedBank?.id) return;
 
@@ -90,6 +104,11 @@ function BanksPage() {
         const arr = Array.isArray(data) ? data : [];
         arr.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
         setBranches(arr);
+
+        // init per-branch summary state so tiles don't all show "…" together
+        const init = {};
+        for (const br of arr) init[br.id] = { loading: true, data: null };
+        setBranchSummaryMap(init);
       } catch (e) {
         setBranchesError(e?.message || "Failed to load branches");
       } finally {
@@ -101,7 +120,7 @@ function BanksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEmail, selectedBank?.id]);
 
-  // ✅ NEW: load bank summary (soft fail)
+  // Load bank summary (soft fail)
   useEffect(() => {
     const loadBankSummary = async () => {
       setBankSummary(null);
@@ -126,10 +145,9 @@ function BanksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEmail, selectedBank?.id]);
 
-  // ✅ NEW: load branch summaries (soft fail, parallel)
+  // Load branch summaries (soft fail, parallel)
   useEffect(() => {
     const loadBranchSummaries = async () => {
-      setBranchSummaryMap({});
       if (!branches?.length) return;
 
       setBranchSummaryLoading(true);
@@ -149,9 +167,11 @@ function BanksPage() {
           })
         );
 
-        const next = {};
-        for (const [id, data] of entries) next[id] = data;
-        setBranchSummaryMap(next);
+        setBranchSummaryMap((prev) => {
+          const next = { ...(prev || {}) };
+          for (const [id, data] of entries) next[id] = { loading: false, data };
+          return next;
+        });
       } finally {
         setBranchSummaryLoading(false);
       }
@@ -160,6 +180,42 @@ function BanksPage() {
     if (userEmail) loadBranchSummaries();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEmail, branches?.length]);
+
+  // ✅ Create bank
+  const createBank = async () => {
+    if (!isAdmin) return;
+    const name = (newBankName || "").trim();
+    if (!name) return;
+
+    setCreatingBank(true);
+    setCreateBankError("");
+    try {
+      const res = await authedFetch(`${API_BASE}/api/master/banks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+
+      const created = await res.json();
+
+      // refresh banks and select the newly created one
+      await loadBanks();
+      setBankSearch("");
+      if (created?.id) setSelectedId(created.id);
+
+      setShowAddBank(false);
+      setNewBankName("");
+    } catch (e) {
+      setCreateBankError(e?.message || "Failed to create bank");
+    } finally {
+      setCreatingBank(false);
+    }
+  };
 
   // ---------- Styles ----------
   const pageStyle = { maxWidth: "980px", display: "flex", flexDirection: "column", gap: "1rem" };
@@ -193,9 +249,24 @@ function BanksPage() {
     cursor: "not-allowed",
   };
 
+  const dangerCard = {
+    ...cardStyle,
+    borderColor: "#fecaca",
+    background: "#fff1f2",
+  };
+
   const muted = { color: "#6b7280", fontSize: "0.92rem" };
 
   const grid2 = { display: "grid", gridTemplateColumns: "360px 1fr", gap: "1rem" };
+
+  const inputStyle = {
+    width: "100%",
+    padding: "0.55rem 0.65rem",
+    borderRadius: "12px",
+    border: "1px solid #d1d5db",
+    fontSize: "0.95rem",
+    background: "#fff",
+  };
 
   const bankButton = (active) => ({
     width: "100%",
@@ -211,7 +282,7 @@ function BanksPage() {
 
   const branchGrid = {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
     gap: "0.75rem",
     marginTop: "0.85rem",
   };
@@ -221,9 +292,10 @@ function BanksPage() {
     borderRadius: "14px",
     padding: "0.85rem",
     background: "#fff",
-    display: "flex",
-    flexDirection: "column",
-    gap: "0.55rem",
+    display: "grid",
+    gridTemplateColumns: "1fr auto",
+    gap: "0.65rem",
+    alignItems: "center",
   };
 
   const pillStyle = (bg, fg) => ({
@@ -237,9 +309,33 @@ function BanksPage() {
     border: "1px solid rgba(0,0,0,0.06)",
     fontWeight: 750,
     lineHeight: 1,
+    whiteSpace: "nowrap",
   });
 
   const pillsRow = { display: "flex", gap: "0.45rem", flexWrap: "wrap", alignItems: "center" };
+
+  const thinDivider = { height: 1, background: "#eef2f7", marginTop: "0.85rem" };
+
+  // modal-ish block
+  const overlay = {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.35)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "1rem",
+    zIndex: 50,
+  };
+
+  const modal = {
+    width: "min(520px, 100%)",
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: "16px",
+    boxShadow: "0 15px 50px rgba(0,0,0,0.25)",
+    padding: "1rem",
+  };
 
   if (!userEmail) {
     return (
@@ -255,13 +351,73 @@ function BanksPage() {
     );
   }
 
+  const bankCounts = {
+    pending: bankSummary?.pending ?? null,
+    completed: bankSummary?.completed ?? null,
+    unpaid: bankSummary?.completed_unpaid ?? null,
+    total: bankSummary?.total ?? null,
+  };
+
   return (
     <div style={pageStyle}>
+      {/* Add Bank Modal */}
+      {showAddBank && (
+        <div style={overlay} onMouseDown={() => !creatingBank && setShowAddBank(false)}>
+          <div style={modal} onMouseDown={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 900, fontSize: "1.05rem" }}>Add Bank</div>
+                <div style={{ ...muted, marginTop: "0.15rem" }}>Minimal: just a name. Details can be edited inside Bank.</div>
+              </div>
+              <button style={secondaryBtnStyle} disabled={creatingBank} onClick={() => setShowAddBank(false)}>
+                Close
+              </button>
+            </div>
+
+            <div style={{ marginTop: "0.9rem" }}>
+              <div style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: "0.35rem" }}>Bank Name *</div>
+              <input
+                style={inputStyle}
+                value={newBankName}
+                onChange={(e) => setNewBankName(e.target.value)}
+                placeholder="e.g., SBI"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") createBank();
+                }}
+                autoFocus
+              />
+              {createBankError ? (
+                <div style={{ marginTop: "0.6rem", color: "#9f1239", fontSize: "0.9rem" }}>
+                  ⚠️ {createBankError}
+                </div>
+              ) : null}
+            </div>
+
+            <div style={{ marginTop: "0.95rem", display: "flex", justifyContent: "flex-end", gap: "0.6rem", flexWrap: "wrap" }}>
+              <button style={secondaryBtnStyle} disabled={creatingBank} onClick={() => setShowAddBank(false)}>
+                Cancel
+              </button>
+              <button
+                style={{
+                  ...btnStyle,
+                  background: creatingBank ? "#9ca3af" : "#111827",
+                  cursor: creatingBank ? "not-allowed" : "pointer",
+                }}
+                disabled={creatingBank || !String(newBankName || "").trim()}
+                onClick={createBank}
+              >
+                {creatingBank ? "Creating…" : "Create Bank"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={rowStyle}>
         <div>
           <h1 style={{ margin: 0 }}>Banks & Branches</h1>
           <div style={{ ...muted, marginTop: "0.25rem" }}>
-            Minimal overview here. Deep details inside Bank → Branch pages.
+            Quick overview. Go inside a bank/branch for full details.
           </div>
         </div>
 
@@ -277,7 +433,7 @@ function BanksPage() {
       )}
 
       {banksError && (
-        <div style={{ ...cardStyle, borderColor: "#fecaca", background: "#fff1f2" }}>
+        <div style={dangerCard}>
           <div style={{ fontWeight: 800, color: "#9f1239" }}>Failed to load banks</div>
           <div style={{ color: "#9f1239", marginTop: "0.25rem" }}>{banksError}</div>
         </div>
@@ -292,15 +448,25 @@ function BanksPage() {
               <span style={{ ...muted, fontSize: "0.85rem" }}>Count: {banks.length}</span>
             </div>
 
+            <div style={{ marginTop: "0.75rem" }}>
+              <input
+                style={inputStyle}
+                value={bankSearch}
+                onChange={(e) => setBankSearch(e.target.value)}
+                placeholder="Search bank…"
+              />
+            </div>
+
             <div style={{ marginTop: "0.75rem", display: "grid", gap: "0.6rem" }}>
-              {banks.length === 0 ? (
-                <div style={muted}>No banks yet.</div>
+              {filteredBanks.length === 0 ? (
+                <div style={muted}>No matching banks.</div>
               ) : (
-                banks.map((b) => (
+                filteredBanks.map((b) => (
                   <button
                     key={b.id}
                     style={bankButton(String(selectedId) === String(b.id))}
                     onClick={() => setSelectedId(b.id)}
+                    title={b.name}
                   >
                     {b.name}
                   </button>
@@ -308,16 +474,29 @@ function BanksPage() {
               )}
             </div>
 
-            <div style={{ marginTop: "0.75rem" }}>
+            <div style={thinDivider} />
+
+            <div style={{ marginTop: "0.85rem", display: "flex", justifyContent: "space-between", gap: "0.6rem" }}>
               {isAdmin ? (
-                <button style={btnStyle} disabled>
-                  + Add Bank (next)
+                <button style={btnStyle} onClick={() => { setCreateBankError(""); setNewBankName(""); setShowAddBank(true); }}>
+                  + Add Bank
                 </button>
               ) : (
                 <button style={disabledBtnStyle} disabled>
                   Admin only
                 </button>
               )}
+
+              <button
+                style={secondaryBtnStyle}
+                onClick={() => {
+                  setBankSearch("");
+                  if (banks?.length) setSelectedId(banks[0].id);
+                }}
+                title="Reset selection"
+              >
+                Reset
+              </button>
             </div>
           </div>
 
@@ -329,30 +508,25 @@ function BanksPage() {
                   {selectedBank ? selectedBank.name : "Select a bank"}
                 </h2>
 
-                {/* ✅ NEW: summary pills under bank name (small + clean) */}
                 {selectedBank && (
                   <div style={{ marginTop: "0.35rem", ...pillsRow }}>
                     {bankSummaryLoading ? (
-                      <span style={pillStyle("#f3f4f6", "#111827")}>Loading counts…</span>
+                      <span style={pillStyle("#f3f4f6", "#111827")}>Loading…</span>
                     ) : bankSummary ? (
                       <>
-                        <span style={pillStyle("#fff7ed", "#9a3412")}>
-                          Pending: {bankSummary.pending ?? 0}
-                        </span>
-                        <span style={pillStyle("#fff1f2", "#9f1239")}>
-                          Completed-Unpaid: {bankSummary.completed_unpaid ?? 0}
-                        </span>
+                        <span style={pillStyle("#fff7ed", "#9a3412")}>Pending: {bankCounts.pending ?? 0}</span>
+                        <span style={pillStyle("#fff1f2", "#9f1239")}>Unpaid: {bankCounts.unpaid ?? 0}</span>
+                        <span style={pillStyle("#ecfdf5", "#065f46")}>Completed: {bankCounts.completed ?? 0}</span>
+                        <span style={pillStyle("#f3f4f6", "#111827")}>Total: {bankCounts.total ?? 0}</span>
                       </>
                     ) : (
-                      <span style={pillStyle("#f3f4f6", "#111827")}>
-                        Counts not connected yet
-                      </span>
+                      <span style={pillStyle("#f3f4f6", "#111827")}>Counts not connected</span>
                     )}
                   </div>
                 )}
 
                 <div style={{ ...muted, marginTop: "0.55rem" }}>
-                  Branch tiles here are intentionally minimal (name + open).
+                  Branches (name + quick status). Open a branch for deep work.
                 </div>
               </div>
 
@@ -367,7 +541,6 @@ function BanksPage() {
               </div>
             </div>
 
-            {/* Branch tiles */}
             {branchesLoading && <div style={{ ...muted, marginTop: "0.85rem" }}>Loading branches…</div>}
 
             {branchesError && (
@@ -383,37 +556,46 @@ function BanksPage() {
                 ) : (
                   <div style={branchGrid}>
                     {branches.map((br) => {
-                      const s = branchSummaryMap?.[br.id] || null;
+                      const node = branchSummaryMap?.[br.id] || { loading: branchSummaryLoading, data: null };
+                      const s = node?.data || null;
+
+                      const pending = s?.pending ?? 0;
+                      const unpaid = s?.completed_unpaid ?? 0;
 
                       return (
                         <div key={br.id} style={branchTile}>
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: "0.6rem", alignItems: "center" }}>
-                            <div style={{ fontWeight: 900 }}>{br.name}</div>
-                            <button
-                              style={secondaryBtnStyle}
-                              onClick={() => navigate(`/settings/branches/${br.id}`)}
+                          <div style={{ minWidth: 0 }}>
+                            <div
+                              style={{
+                                fontWeight: 900,
+                                fontSize: "0.98rem",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
                             >
-                              Open
-                            </button>
+                              {br.name}
+                            </div>
+                            <div style={{ marginTop: "0.4rem", ...pillsRow }}>
+                              {node?.loading ? (
+                                <span style={pillStyle("#f3f4f6", "#111827")}>Loading…</span>
+                              ) : s ? (
+                                <>
+                                  <span style={pillStyle("#fff7ed", "#9a3412")}>P: {pending}</span>
+                                  <span style={pillStyle("#fff1f2", "#9f1239")}>U: {unpaid}</span>
+                                </>
+                              ) : (
+                                <span style={pillStyle("#f3f4f6", "#111827")}>—</span>
+                              )}
+                            </div>
                           </div>
 
-                          {/* ✅ NEW: tiny pills inside branch tile */}
-                          <div style={pillsRow}>
-                            {branchSummaryLoading ? (
-                              <span style={pillStyle("#f3f4f6", "#111827")}>…</span>
-                            ) : s ? (
-                              <>
-                                <span style={pillStyle("#fff7ed", "#9a3412")}>
-                                  P: {s.pending ?? 0}
-                                </span>
-                                <span style={pillStyle("#fff1f2", "#9f1239")}>
-                                  U: {s.completed_unpaid ?? 0}
-                                </span>
-                              </>
-                            ) : (
-                              <span style={pillStyle("#f3f4f6", "#111827")}>—</span>
-                            )}
-                          </div>
+                          <button
+                            style={secondaryBtnStyle}
+                            onClick={() => navigate(`/settings/branches/${br.id}`)}
+                          >
+                            Open
+                          </button>
                         </div>
                       );
                     })}
@@ -421,7 +603,7 @@ function BanksPage() {
                 )}
 
                 <div style={{ marginTop: "0.9rem", ...muted, fontSize: "0.88rem" }}>
-                  Want to add/edit branches? Do it inside Bank Detail.
+                  Add/edit branches inside Bank Detail.
                 </div>
               </>
             )}
