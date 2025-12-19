@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -14,11 +14,44 @@ from app.routers.auth import get_current_user
 router = APIRouter(prefix="/api/master", tags=["master-data"])
 
 
+# ---------------------------
+# Utilities
+# ---------------------------
+
 def _require_admin_user(current_user: User) -> None:
     if not current_user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     if str(getattr(current_user, "role", "") or "").upper() != "ADMIN":
         raise HTTPException(status_code=403, detail="Admin access required")
+
+
+def _norm_name(s: str) -> str:
+    # server-side canonical normalization:
+    #  - strip
+    #  - collapse whitespace
+    #  - keep original casing as typed (we only normalize for comparisons)
+    return " ".join((s or "").strip().split())
+
+
+def _norm_email(s: Optional[str]) -> Optional[str]:
+    if not s:
+        return None
+    s2 = s.strip().lower()
+    return s2 if s2 else None
+
+
+def _exists_by_name_ilike(q, model_name_col, name: str, extra_filters=None):
+    """
+    Duplicate detection:
+      - compares using ILIKE on normalized input
+      - also guards against multiple spaces by normalizing input
+    """
+    n = _norm_name(name)
+    query = q.filter(model_name_col.ilike(n))
+    if extra_filters:
+        for f in extra_filters:
+            query = query.filter(f)
+    return query.first()
 
 
 # ---------------------------
@@ -27,6 +60,8 @@ def _require_admin_user(current_user: User) -> None:
 
 class BankIn(BaseModel):
     name: str = Field(..., min_length=2, max_length=200)
+    # idempotent create: if already exists, return existing instead of 400
+    upsert: Optional[bool] = False
 
 
 class BankOut(BaseModel):
@@ -72,6 +107,7 @@ class BankDetailOut(BaseModel):
 class BranchIn(BaseModel):
     bank_id: int
     name: str = Field(..., min_length=2, max_length=200)
+    upsert: Optional[bool] = False
 
     expected_frequency_days: Optional[int] = None
     expected_weekly_revenue: Optional[float] = None
@@ -140,6 +176,7 @@ class BranchOut(BaseModel):
 
 class ClientIn(BaseModel):
     name: str = Field(..., min_length=2, max_length=200)
+    upsert: Optional[bool] = False
     phone: Optional[str] = Field(default=None, max_length=50)
     email: Optional[str] = Field(default=None, max_length=250)
 
@@ -156,6 +193,7 @@ class ClientOut(BaseModel):
 
 class PropertyTypeIn(BaseModel):
     name: str = Field(..., min_length=2, max_length=200)
+    upsert: Optional[bool] = False
 
 
 class PropertyTypeOut(BaseModel):
@@ -186,9 +224,12 @@ def create_bank(
 ):
     _require_admin_user(current_user)
 
-    name = payload.name.strip()
-    exists = db.query(Bank).filter(Bank.name.ilike(name)).first()
+    name = _norm_name(payload.name)
+
+    exists = _exists_by_name_ilike(db.query(Bank), Bank.name, name)
     if exists:
+        if payload.upsert:
+            return exists
         raise HTTPException(status_code=400, detail="Bank already exists")
 
     bank = Bank(name=name)
@@ -226,7 +267,7 @@ def update_bank(
     data = payload.model_dump(exclude_unset=True)
 
     if "name" in data and data["name"] is not None:
-        new_name = data["name"].strip()
+        new_name = _norm_name(data["name"])
         dup = db.query(Bank).filter(Bank.name.ilike(new_name), Bank.id != bank_id).first()
         if dup:
             raise HTTPException(status_code=400, detail="Bank name already exists")
@@ -248,13 +289,16 @@ def update_bank(
 @router.get("/branches", response_model=List[BranchOut])
 def list_branches(
     bank_id: Optional[int] = None,
+    q: Optional[str] = Query(default=None, description="Optional search (case-insensitive substring)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    q = db.query(Branch)
+    query = db.query(Branch)
     if bank_id is not None:
-        q = q.filter(Branch.bank_id == bank_id)
-    return q.order_by(Branch.name.asc()).all()
+        query = query.filter(Branch.bank_id == bank_id)
+    if q:
+        query = query.filter(Branch.name.ilike(f"%{_norm_name(q)}%"))
+    return query.order_by(Branch.name.asc()).all()
 
 
 @router.get("/branches/{branch_id}", response_model=BranchOut)
@@ -281,9 +325,17 @@ def create_branch(
     if not bank:
         raise HTTPException(status_code=400, detail="Invalid bank_id")
 
-    name = payload.name.strip()
-    dup = db.query(Branch).filter(Branch.bank_id == payload.bank_id, Branch.name.ilike(name)).first()
+    name = _norm_name(payload.name)
+
+    dup = _exists_by_name_ilike(
+        db.query(Branch),
+        Branch.name,
+        name,
+        extra_filters=[Branch.bank_id == payload.bank_id],
+    )
     if dup:
+        if payload.upsert:
+            return dup
         raise HTTPException(status_code=400, detail="Branch already exists for this bank")
 
     branch = Branch(
@@ -296,8 +348,8 @@ def create_branch(
         district=payload.district,
         contact_name=payload.contact_name,
         contact_role=payload.contact_role,
-        phone=payload.phone,
-        email=(payload.email.strip().lower() if payload.email else None),
+        phone=(payload.phone.strip() if payload.phone else None),
+        email=_norm_email(payload.email),
         whatsapp=payload.whatsapp,
         notes=payload.notes,
         is_active=(payload.is_active if payload.is_active is not None else True),
@@ -324,10 +376,14 @@ def update_branch(
     data = payload.model_dump(exclude_unset=True)
 
     if "name" in data and data["name"] is not None:
-        new_name = data["name"].strip()
+        new_name = _norm_name(data["name"])
         dup = (
             db.query(Branch)
-            .filter(Branch.bank_id == br.bank_id, Branch.name.ilike(new_name), Branch.id != branch_id)
+            .filter(
+                Branch.bank_id == br.bank_id,
+                Branch.name.ilike(new_name),
+                Branch.id != branch_id,
+            )
             .first()
         )
         if dup:
@@ -335,7 +391,7 @@ def update_branch(
         data["name"] = new_name
 
     if "email" in data and data["email"] is not None:
-        data["email"] = data["email"].strip().lower()
+        data["email"] = _norm_email(data["email"])
 
     for k, v in data.items():
         setattr(br, k, v)
@@ -352,10 +408,14 @@ def update_branch(
 
 @router.get("/clients", response_model=List[ClientOut])
 def list_clients(
+    q: Optional[str] = Query(default=None, description="Optional search (case-insensitive substring)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return db.query(Client).order_by(Client.name.asc()).all()
+    query = db.query(Client)
+    if q:
+        query = query.filter(Client.name.ilike(f"%{_norm_name(q)}%"))
+    return query.order_by(Client.name.asc()).all()
 
 
 @router.post("/clients", response_model=ClientOut)
@@ -366,15 +426,17 @@ def create_client(
 ):
     _require_admin_user(current_user)
 
-    name = payload.name.strip()
-    dup = db.query(Client).filter(Client.name.ilike(name)).first()
+    name = _norm_name(payload.name)
+    dup = _exists_by_name_ilike(db.query(Client), Client.name, name)
     if dup:
+        if payload.upsert:
+            return dup
         raise HTTPException(status_code=400, detail="Client already exists")
 
     client = Client(
         name=name,
         phone=(payload.phone.strip() if payload.phone else None),
-        email=(payload.email.strip().lower() if payload.email else None),
+        email=_norm_email(payload.email),
     )
     db.add(client)
     db.commit()
@@ -388,10 +450,14 @@ def create_client(
 
 @router.get("/property-types", response_model=List[PropertyTypeOut])
 def list_property_types(
+    q: Optional[str] = Query(default=None, description="Optional search (case-insensitive substring)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return db.query(PropertyType).order_by(PropertyType.name.asc()).all()
+    query = db.query(PropertyType)
+    if q:
+        query = query.filter(PropertyType.name.ilike(f"%{_norm_name(q)}%"))
+    return query.order_by(PropertyType.name.asc()).all()
 
 
 @router.post("/property-types", response_model=PropertyTypeOut)
@@ -402,9 +468,11 @@ def create_property_type(
 ):
     _require_admin_user(current_user)
 
-    name = payload.name.strip()
-    dup = db.query(PropertyType).filter(PropertyType.name.ilike(name)).first()
+    name = _norm_name(payload.name)
+    dup = _exists_by_name_ilike(db.query(PropertyType), PropertyType.name, name)
     if dup:
+        if payload.upsert:
+            return dup
         raise HTTPException(status_code=400, detail="Property type already exists")
 
     pt = PropertyType(name=name)
