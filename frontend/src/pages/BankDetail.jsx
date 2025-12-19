@@ -1,4 +1,3 @@
-// src/pages/BankDetail.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getCurrentUser } from "../auth/currentUser";
@@ -83,7 +82,9 @@ function BankDetailPage() {
           throw new Error(text || `HTTP ${brRes.status}`);
         }
         const brData = await brRes.json();
-        setBranches(Array.isArray(brData) ? brData : []);
+        const arr = Array.isArray(brData) ? brData : [];
+        arr.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+        setBranches(arr);
       } catch (e) {
         setError(e?.message || "Failed to load bank");
       } finally {
@@ -197,12 +198,30 @@ function BankDetailPage() {
   };
 
   const secondaryBtnStyle = { ...btnStyle, background: "#fff", color: "#111827" };
-  const disabledBtnStyle = { ...btnStyle, background: "#f3f4f6", color: "#9ca3af", border: "1px solid #e5e7eb", cursor: "not-allowed" };
+  const disabledBtnStyle = {
+    ...btnStyle,
+    background: "#f3f4f6",
+    color: "#9ca3af",
+    border: "1px solid #e5e7eb",
+    cursor: "not-allowed",
+  };
 
   const labelStyle = { fontSize: "0.8rem", color: "#6b7280", marginBottom: "0.35rem" };
-  const inputStyle = { width: "100%", padding: "0.55rem 0.65rem", borderRadius: "10px", border: "1px solid #d1d5db", fontSize: "0.95rem", background: "#fff" };
+  const inputStyle = {
+    width: "100%",
+    padding: "0.55rem 0.65rem",
+    borderRadius: "10px",
+    border: "1px solid #d1d5db",
+    fontSize: "0.95rem",
+    background: "#fff",
+  };
 
-  const grid2 = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "0.9rem", marginTop: "0.75rem" };
+  const grid2 = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+    gap: "0.9rem",
+    marginTop: "0.75rem",
+  };
 
   // compact black bank block
   const compactBlock = {
@@ -213,11 +232,31 @@ function BankDetailPage() {
     border: "1px solid rgba(255,255,255,0.08)",
   };
 
-  const compactRow = { display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" };
+  const compactRow = {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "0.75rem",
+    flexWrap: "wrap",
+    alignItems: "center",
+  };
   const compactMuted = { color: "rgba(255,255,255,0.72)", fontSize: "0.88rem" };
 
-  const branchGrid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "0.85rem", marginTop: "0.85rem" };
-  const branchTile = { border: "1px solid #e5e7eb", borderRadius: "14px", padding: "0.85rem", background: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.75rem" };
+  const branchGrid = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+    gap: "0.85rem",
+    marginTop: "0.85rem",
+  };
+  const branchTile = {
+    border: "1px solid #e5e7eb",
+    borderRadius: "14px",
+    padding: "0.85rem",
+    background: "#fff",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "0.75rem",
+  };
 
   if (!userEmail) {
     return (
@@ -239,7 +278,7 @@ function BankDetailPage() {
         <div>
           <h1 style={{ margin: 0 }}>{bankTitle}</h1>
           <div style={{ color: "#6b7280", fontSize: "0.92rem", marginTop: "0.25rem" }}>
-            Bank invoice defaults are kept minimal here. Branch work is the priority.
+            Keep this page clean: invoice defaults + branches + assignments ledger.
           </div>
         </div>
 
@@ -271,7 +310,7 @@ function BankDetailPage() {
               <div>
                 <h2 style={{ marginTop: 0, marginBottom: "0.25rem" }}>Bank Invoice Defaults</h2>
                 <div style={{ color: "#6b7280", fontSize: "0.9rem" }}>
-                  Keep this small. Edit only when needed.
+                  Edit only when needed. Everything else stays operational.
                 </div>
               </div>
 
@@ -301,20 +340,16 @@ function BankDetailPage() {
               <div style={{ marginTop: "0.85rem" }}>
                 <div style={compactBlock}>
                   <div style={compactRow}>
-                    <div style={{ fontWeight: 900, fontSize: "1rem" }}>
-                      {bank.name}
-                    </div>
+                    <div style={{ fontWeight: 900, fontSize: "1rem" }}>{bank.name}</div>
                     <div style={compactMuted}>Bank ID: {id}</div>
                   </div>
 
                   <div style={{ marginTop: "0.6rem", display: "grid", gap: "0.35rem" }}>
                     <div style={compactMuted}>
-                      <b style={{ color: "#fff" }}>Account Name:</b>{" "}
-                      {bank.account_name || "—"}
+                      <b style={{ color: "#fff" }}>Account Name:</b> {bank.account_name || "—"}
                     </div>
                     <div style={compactMuted}>
-                      <b style={{ color: "#fff" }}>Account No:</b>{" "}
-                      {bank.account_number || "—"}
+                      <b style={{ color: "#fff" }}>Account No:</b> {bank.account_number || "—"}
                     </div>
                     <div style={compactMuted}>
                       <b style={{ color: "#fff" }}>IFSC:</b> {bank.ifsc || "—"}
@@ -417,7 +452,7 @@ function BankDetailPage() {
               <div>
                 <h2 style={{ marginTop: 0, marginBottom: "0.25rem" }}>Branches</h2>
                 <div style={{ color: "#6b7280", fontSize: "0.9rem" }}>
-                  Minimal here: just names + direct links. Full details inside branch.
+                  Minimal here: just names + open. Full details inside branch.
                 </div>
               </div>
 
@@ -507,10 +542,7 @@ function BankDetailPage() {
                 {branches.map((br) => (
                   <div key={br.id} style={branchTile}>
                     <div style={{ fontWeight: 800 }}>{br.name}</div>
-                    <button
-                      style={secondaryBtnStyle}
-                      onClick={() => navigate(`/settings/branches/${br.id}`)}
-                    >
+                    <button style={secondaryBtnStyle} onClick={() => navigate(`/settings/branches/${br.id}`)}>
                       Open
                     </button>
                   </div>
@@ -519,13 +551,14 @@ function BankDetailPage() {
             )}
           </div>
 
-          {/* Assignments (This Bank) */}
+          {/* ✅ Assignments (This Bank) — shared module (filters + sorting + summary) */}
           <div style={cardStyle}>
             <AssignmentsModule
               scopeLabel="This Bank"
               bankId={Number(id)}
               authedFetch={authedFetch}
               onOpenAssignment={(assignmentId) => navigate(`/assignments/${assignmentId}`)}
+              compact
             />
           </div>
         </>

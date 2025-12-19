@@ -1,4 +1,3 @@
-// src/pages/BranchDetail.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getCurrentUser } from "../auth/currentUser";
@@ -175,6 +174,7 @@ function BranchDetailPage() {
     color: fg,
     border: "1px solid rgba(0,0,0,0.06)",
     fontWeight: 650,
+    whiteSpace: "nowrap",
   });
 
   const btnStyle = {
@@ -230,12 +230,10 @@ function BranchDetailPage() {
               {branch?.is_active ? "ACTIVE" : "INACTIVE"}
             </span>
             <span style={pillStyle("#f3f4f6", "#111827")}>Branch ID: {id}</span>
-            {branch?.bank_id ? (
-              <span style={pillStyle("#f3f4f6", "#111827")}>Bank ID: {branch.bank_id}</span>
-            ) : null}
+            {branch?.bank_id ? <span style={pillStyle("#f3f4f6", "#111827")}>Bank ID: {branch.bank_id}</span> : null}
           </div>
           <div style={{ color: "#6b7280", fontSize: "0.92rem", marginTop: "0.25rem" }}>
-            Keep this page minimal. Heavy details stay here; summary stays on bank page.
+            Keep this page minimal. Ops details here; summary stays on Banks page.
           </div>
         </div>
 
@@ -244,8 +242,8 @@ function BranchDetailPage() {
             ← Back to Banks
           </button>
 
-          {isAdmin && (
-            !isEditing ? (
+          {isAdmin &&
+            (!isEditing ? (
               <button style={btnStyle} onClick={() => setIsEditing(true)}>
                 Edit Branch
               </button>
@@ -258,8 +256,7 @@ function BranchDetailPage() {
                   Save
                 </button>
               </>
-            )
-          )}
+            ))}
         </div>
       </div>
 
@@ -287,9 +284,7 @@ function BranchDetailPage() {
                   Contact + ops fields you actually use.
                 </div>
               </div>
-              {!isAdmin && (
-                <span style={pillStyle("#f3f4f6", "#111827")}>Read-only (Employee)</span>
-              )}
+              {!isAdmin && <span style={pillStyle("#f3f4f6", "#111827")}>Read-only (Employee)</span>}
             </div>
 
             <div style={grid2}>
@@ -306,19 +301,11 @@ function BranchDetailPage() {
                 <div style={labelStyle}>Active</div>
                 {isEditing ? (
                   <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                    <input
-                      type="checkbox"
-                      checked={!!form.is_active}
-                      onChange={(e) => handleChange("is_active", e.target.checked)}
-                    />
-                    <span style={{ color: "#111827", fontWeight: 650 }}>
-                      {form.is_active ? "Active" : "Inactive"}
-                    </span>
+                    <input type="checkbox" checked={!!form.is_active} onChange={(e) => handleChange("is_active", e.target.checked)} />
+                    <span style={{ color: "#111827", fontWeight: 650 }}>{form.is_active ? "Active" : "Inactive"}</span>
                   </label>
                 ) : (
-                  <div style={{ color: "#111827", fontWeight: 650 }}>
-                    {branch.is_active ? "Active" : "Inactive"}
-                  </div>
+                  <div style={{ color: "#111827", fontWeight: 650 }}>{branch.is_active ? "Active" : "Inactive"}</div>
                 )}
               </div>
 
@@ -370,32 +357,18 @@ function BranchDetailPage() {
               <div>
                 <div style={labelStyle}>Expected Frequency (days)</div>
                 {isEditing ? (
-                  <input
-                    type="number"
-                    style={inputStyle}
-                    value={form.expected_frequency_days}
-                    onChange={(e) => handleChange("expected_frequency_days", e.target.value)}
-                  />
+                  <input type="number" style={inputStyle} value={form.expected_frequency_days} onChange={(e) => handleChange("expected_frequency_days", e.target.value)} />
                 ) : (
-                  <div style={{ color: "#111827" }}>
-                    {branch.expected_frequency_days ?? "—"}
-                  </div>
+                  <div style={{ color: "#111827" }}>{branch.expected_frequency_days ?? "—"}</div>
                 )}
               </div>
 
               <div>
                 <div style={labelStyle}>Expected Weekly Revenue</div>
                 {isEditing ? (
-                  <input
-                    type="number"
-                    style={inputStyle}
-                    value={form.expected_weekly_revenue}
-                    onChange={(e) => handleChange("expected_weekly_revenue", e.target.value)}
-                  />
+                  <input type="number" style={inputStyle} value={form.expected_weekly_revenue} onChange={(e) => handleChange("expected_weekly_revenue", e.target.value)} />
                 ) : (
-                  <div style={{ color: "#111827" }}>
-                    {branch.expected_weekly_revenue ?? "—"}
-                  </div>
+                  <div style={{ color: "#111827" }}>{branch.expected_weekly_revenue ?? "—"}</div>
                 )}
               </div>
 
@@ -429,11 +402,7 @@ function BranchDetailPage() {
               <div style={{ gridColumn: "1 / -1" }}>
                 <div style={labelStyle}>Notes</div>
                 {isEditing ? (
-                  <textarea
-                    style={{ ...inputStyle, minHeight: "90px", resize: "vertical" }}
-                    value={form.notes}
-                    onChange={(e) => handleChange("notes", e.target.value)}
-                  />
+                  <textarea style={{ ...inputStyle, minHeight: "90px", resize: "vertical" }} value={form.notes} onChange={(e) => handleChange("notes", e.target.value)} />
                 ) : (
                   <div style={{ color: "#111827" }}>{branch.notes || "—"}</div>
                 )}
@@ -441,13 +410,14 @@ function BranchDetailPage() {
             </div>
           </div>
 
-          {/* Assignments (This Branch) */}
+          {/* Assignments (This Branch) — shared module, compact mode */}
           <div style={cardStyle}>
             <AssignmentsModule
               scopeLabel="This Branch"
               branchId={Number(id)}
               authedFetch={authedFetch}
               onOpenAssignment={(assignmentId) => navigate(`/assignments/${assignmentId}`)}
+              compact
             />
           </div>
         </>

@@ -193,6 +193,28 @@ def _is_admin(user: User) -> bool:
 # List + Summary (filters live here)
 # ---------------------------
 
+def _list_assignments_impl(
+    skip: int,
+    limit: int,
+    bank_id: Optional[int],
+    branch_id: Optional[int],
+    created_from: Optional[date],
+    created_to: Optional[date],
+    completion: Optional[str],
+    is_paid: Optional[bool],
+    sort_by: Optional[str],
+    sort_dir: Optional[str],
+    db: Session,
+) -> List[Assignment]:
+    completion_norm = _normalize_completion(completion)
+    query = db.query(Assignment)
+    query = _apply_filters(query, bank_id, branch_id, created_from, created_to, completion_norm, is_paid)
+    query = _apply_sort(query, sort_by or "created_at", sort_dir or "desc")
+    return query.offset(skip).limit(limit).all()
+
+
+# ✅ IMPORTANT: support BOTH /api/assignments and /api/assignments/
+@router.get("", response_model=List[AssignmentRead])
 @router.get("/", response_model=List[AssignmentRead])
 def list_assignments(
     skip: int = Query(default=0, ge=0),
@@ -213,26 +235,19 @@ def list_assignments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Core endpoint used by:
-      - Assignments page
-      - Bank detail table
-      - Branch detail table
-
-    Filters:
-      - bank_id, branch_id
-      - created_from, created_to (YYYY-MM-DD)
-      - completion: ALL | PENDING | COMPLETED
-      - is_paid: true/false
-      - sort_by + sort_dir
-    """
-    completion_norm = _normalize_completion(completion)
-
-    query = db.query(Assignment)
-    query = _apply_filters(query, bank_id, branch_id, created_from, created_to, completion_norm, is_paid)
-    query = _apply_sort(query, sort_by or "created_at", sort_dir or "desc")
-
-    return query.offset(skip).limit(limit).all()
+    return _list_assignments_impl(
+        skip=skip,
+        limit=limit,
+        bank_id=bank_id,
+        branch_id=branch_id,
+        created_from=created_from,
+        created_to=created_to,
+        completion=completion,
+        is_paid=is_paid,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        db=db,
+    )
 
 
 @router.get("/summary")
@@ -246,20 +261,9 @@ def assignments_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """
-    Fast counts for tiles + headers.
-
-    Returns:
-      - total
-      - pending
-      - completed
-      - completed_unpaid
-    """
     completed_value = _completed_status_value()
 
     base = db.query(Assignment)
-
-    # Only apply bank/branch + date filters here (NOT is_paid / completion)
     base = _apply_filters(base, bank_id, branch_id, created_from, created_to, "ALL", None)
 
     status_upper = func.upper(func.coalesce(Assignment.status, ""))
@@ -267,21 +271,15 @@ def assignments_summary(
     total = base.with_entities(func.count(Assignment.id)).scalar() or 0
 
     completed = base.with_entities(
-        func.count(
-            case((status_upper == completed_value, 1))
-        )
+        func.count(case((status_upper == completed_value, 1)))
     ).scalar() or 0
 
     pending = base.with_entities(
-        func.count(
-            case((status_upper != completed_value, 1))
-        )
+        func.count(case((status_upper != completed_value, 1)))
     ).scalar() or 0
 
     completed_unpaid = base.with_entities(
-        func.count(
-            case(((status_upper == completed_value) & (Assignment.is_paid == False), 1))  # noqa: E712
-        )
+        func.count(case(((status_upper == completed_value) & (Assignment.is_paid == False), 1)))  # noqa: E712
     ).scalar() or 0
 
     return {
@@ -296,12 +294,7 @@ def assignments_summary(
 # Create / Read / Detail / Update / Delete
 # ---------------------------
 
-@router.post("/", response_model=AssignmentRead, status_code=status.HTTP_201_CREATED)
-def create_assignment(
-    payload: AssignmentCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
+def _create_assignment_impl(payload: AssignmentCreate, db: Session, current_user: User) -> Assignment:
     assignment_code = generate_assignment_code(db)
 
     data = payload.model_dump()
@@ -359,6 +352,17 @@ def create_assignment(
     )
 
     return obj
+
+
+# ✅ IMPORTANT: support BOTH /api/assignments and /api/assignments/
+@router.post("", response_model=AssignmentRead, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=AssignmentRead, status_code=status.HTTP_201_CREATED)
+def create_assignment(
+    payload: AssignmentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _create_assignment_impl(payload, db, current_user)
 
 
 @router.get("/{assignment_id}", response_model=AssignmentRead)

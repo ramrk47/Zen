@@ -1,5 +1,5 @@
-// src/pages/Home.jsx
-import React, { useEffect, useMemo, useState } from "react";
+// frontend/src/pages/Home.jsx
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getCurrentUser } from "../auth/currentUser";
 import { apiFetch } from "../api/apiFetch";
@@ -11,53 +11,105 @@ const STATUS_LABELS = {
   SUBMITTED: "Submitted",
   COMPLETED: "Completed",
   CANCELLED: "Cancelled",
-  PAID: "Paid",
 };
 
 function formatStatus(status) {
   return STATUS_LABELS[status] || status || "-";
 }
 
-function HomePage() {
-  const navigate = useNavigate();
+function formatMoney(n) {
+  return (Number(n || 0) || 0).toLocaleString("en-IN");
+}
 
+function safeText(v) {
+  if (v === null || v === undefined || v === "") return "-";
+  return String(v);
+}
+
+function getBadgeStyle(kind) {
+  const base = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "0.35rem",
+    padding: "0.18rem 0.55rem",
+    borderRadius: 999,
+    fontSize: "0.82rem",
+    border: "1px solid #e5e7eb",
+    background: "#f9fafb",
+    color: "#374151",
+    whiteSpace: "nowrap",
+  };
+
+  if (kind === "ok") return { ...base, background: "#ecfdf5", borderColor: "#a7f3d0", color: "#065f46" };
+  if (kind === "warn") return { ...base, background: "#fffbeb", borderColor: "#fde68a", color: "#92400e" };
+  if (kind === "bad") return { ...base, background: "#fef2f2", borderColor: "#fecaca", color: "#991b1b" };
+  if (kind === "info") return { ...base, background: "#eff6ff", borderColor: "#bfdbfe", color: "#1d4ed8" };
+  return base;
+}
+
+function statusKind(status) {
+  const s = (status || "").toUpperCase();
+  if (s === "COMPLETED") return "ok";
+  if (s === "CANCELLED") return "bad";
+  if (s === "SITE_VISIT") return "info";
+  if (s === "PENDING") return "warn";
+  return "neutral";
+}
+
+export default function HomePage() {
+  const navigate = useNavigate();
   const user = getCurrentUser();
   const isAdmin = (user?.role || "").toUpperCase() === "ADMIN";
 
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  // separate errors so UI can react differently
   const [error, setError] = useState("");
+  const [authError, setAuthError] = useState("");
+
+  // Prevent race conditions when user clicks Refresh multiple times
+  const reqSeq = useRef(0);
 
   const fetchAssignments = async () => {
+    const mySeq = ++reqSeq.current;
+
     setLoading(true);
     setError("");
+    setAuthError("");
 
     try {
+      // ✅ FastAPI route: prefix "/api/assignments" + GET "/" => "/api/assignments/"
       const res = await apiFetch("/api/assignments/");
-
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         throw new Error(`HTTP ${res.status}${text ? ` - ${text}` : ""}`);
       }
 
       const data = await res.json();
-      const arr = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.assignments)
-        ? data.assignments
-        : [];
+      const arr = Array.isArray(data) ? data : Array.isArray(data?.assignments) ? data.assignments : [];
+
+      // If a newer request finished already, ignore this response
+      if (mySeq !== reqSeq.current) return;
 
       const sorted = [...arr].sort((a, b) => (b?.id ?? 0) - (a?.id ?? 0));
       setAssignments(sorted);
     } catch (err) {
-      console.error("Failed to fetch assignments for dashboard", err);
-      if (err?.message === "UNAUTHORIZED") {
-        setError("Session expired. Please login again.");
+      const msg = String(err?.message || "");
+      console.error("Home dashboard fetch failed:", err);
+
+      // If a newer request finished already, ignore this error
+      if (mySeq !== reqSeq.current) return;
+
+      if (msg.startsWith("UNAUTHORIZED")) {
+        // apiFetch clears local user already; don't auto-redirect (avoids loops)
+        setAuthError("Session invalid / expired. Please login again.");
       } else {
-        setError("Failed to load dashboard data.");
+        setError(msg || "Failed to load dashboard.");
       }
     } finally {
-      setLoading(false);
+      // Only clear loading for latest request
+      if (mySeq === reqSeq.current) setLoading(false);
     }
   };
 
@@ -69,23 +121,16 @@ function HomePage() {
   const aggregates = useMemo(() => {
     const totalAssignments = assignments.length;
 
-    const activeAssignments = assignments.filter(
-      (a) =>
-        a.status !== "COMPLETED" &&
-        a.status !== "PAID" &&
-        a.status !== "CANCELLED"
-    );
+    const activeAssignments = assignments.filter((a) => a.status !== "COMPLETED" && a.status !== "CANCELLED");
 
     const byStatus = assignments.reduce((acc, a) => {
-      const key = a.status || "UNKNOWN";
+      const key = (a.status || "UNKNOWN").toUpperCase();
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {});
 
     const totalFees = assignments.reduce((sum, a) => sum + (a.fees ?? 0), 0);
-    const collectedFees = assignments
-      .filter((a) => a.is_paid)
-      .reduce((sum, a) => sum + (a.fees ?? 0), 0);
+    const collectedFees = assignments.filter((a) => a.is_paid).reduce((sum, a) => sum + (a.fees ?? 0), 0);
 
     return {
       totalAssignments,
@@ -93,233 +138,332 @@ function HomePage() {
       byStatus,
       totalFees,
       collectedFees,
-      pendingFees: totalFees - collectedFees,
+      pendingFees: Math.max(0, totalFees - collectedFees),
     };
   }, [assignments]);
 
-  const recentAssignments = useMemo(() => assignments.slice(0, 7), [assignments]);
+  const recentAssignments = useMemo(() => assignments.slice(0, 8), [assignments]);
 
-  // ---------- styles ----------
-  const subtleTextStyle = { fontSize: "0.85rem", color: "#6b7280" };
+  // ---- UI styles ----
+  const page = { display: "flex", flexDirection: "column", gap: "1rem" };
 
-  const cardsWrapperStyle = {
+  const headerRow = {
     display: "flex",
-    flexWrap: "wrap",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
     gap: "1rem",
-    marginTop: "1rem",
-    marginBottom: "1.25rem",
+    flexWrap: "wrap",
   };
 
-  const cardStyle = {
-    flex: "1 1 180px",
-    minWidth: "180px",
-    padding: "0.9rem 1rem",
-    borderRadius: "12px",
+  const title = { margin: 0, fontSize: "2rem", fontWeight: 900, letterSpacing: "-0.02em" };
+  const subtitle = { marginTop: "0.25rem", fontSize: "0.92rem", color: "#6b7280" };
+
+  const rightActions = { display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" };
+
+  const btn = {
+    padding: "0.45rem 0.9rem",
+    fontSize: "0.9rem",
+    borderRadius: 999,
+    border: "1px solid #d1d5db",
+    background: "#fff",
+    cursor: "pointer",
+  };
+
+  const btnPrimary = {
+    ...btn,
+    border: "none",
+    background: "#2563eb",
+    color: "#fff",
+    fontWeight: 800,
+  };
+
+  const banner = (kind) => ({
+    borderRadius: 12,
+    padding: "0.75rem 0.9rem",
     border: "1px solid #e5e7eb",
-    backgroundColor: "#ffffff",
-    boxShadow: "0 1px 0 rgba(0,0,0,0.03)",
+    background: kind === "error" ? "#fef2f2" : kind === "warn" ? "#fffbeb" : "#f9fafb",
+    color: kind === "error" ? "#991b1b" : kind === "warn" ? "#92400e" : "#374151",
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "0.75rem",
+    alignItems: "center",
+    flexWrap: "wrap",
+  });
+
+  const grid = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+    gap: "0.9rem",
   };
 
-  const cardTitleStyle = {
+  const card = {
+    borderRadius: 14,
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    padding: "0.95rem 1rem",
+    boxShadow: "0 1px 0 rgba(0,0,0,0.03)",
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.25rem",
+  };
+
+  const cardLabel = {
     fontSize: "0.78rem",
     color: "#6b7280",
-    marginBottom: "0.35rem",
     textTransform: "uppercase",
-    letterSpacing: "0.04em",
+    letterSpacing: "0.06em",
   };
 
-  const cardValueStyle = {
-    fontSize: "1.4rem",
-    fontWeight: 750,
-    color: "#111827",
+  const cardValue = { fontSize: "1.55rem", fontWeight: 900, color: "#111827" };
+
+  const split = {
+    display: "grid",
+    gridTemplateColumns: "1.35fr 1fr",
+    gap: "0.9rem",
+    alignItems: "start",
   };
 
-  const tableWrapperStyle = {
-    marginTop: "0.6rem",
-    backgroundColor: "#ffffff",
-    borderRadius: "12px",
+  const panel = {
+    borderRadius: 14,
     border: "1px solid #e5e7eb",
+    background: "#fff",
     overflow: "hidden",
   };
 
-  const tableStyle = {
-    borderCollapse: "collapse",
-    width: "100%",
-    backgroundColor: "#ffffff",
-    fontSize: "0.92rem",
+  const panelHeader = {
+    padding: "0.75rem 0.9rem",
+    borderBottom: "1px solid #e5e7eb",
+    background: "#f9fafb",
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "0.75rem",
+    alignItems: "center",
+    flexWrap: "wrap",
   };
 
-  const thStyle = {
+  const panelTitle = { margin: 0, fontSize: "1rem", fontWeight: 900, color: "#111827" };
+
+  const table = { width: "100%", borderCollapse: "collapse", fontSize: "0.92rem" };
+  const th = {
     textAlign: "left",
     padding: "0.65rem 0.85rem",
     borderBottom: "1px solid #e5e7eb",
-    fontWeight: 700,
+    fontWeight: 900,
     fontSize: "0.78rem",
     color: "#4b5563",
-    backgroundColor: "#f9fafb",
     textTransform: "uppercase",
-    letterSpacing: "0.04em",
+    letterSpacing: "0.06em",
     whiteSpace: "nowrap",
+    background: "#fff",
   };
+  const td = { padding: "0.65rem 0.85rem", borderBottom: "1px solid #f3f4f6", verticalAlign: "middle" };
+  const linkCell = { ...td, cursor: "pointer", fontWeight: 900, textDecoration: "underline", textUnderlineOffset: 2 };
 
-  const tdStyle = {
-    padding: "0.65rem 0.85rem",
-    borderBottom: "1px solid #f3f4f6",
-    verticalAlign: "middle",
-  };
+  const empty = { padding: "1rem", color: "#6b7280", fontSize: "0.92rem" };
 
-  const clickableTdStyle = {
-    ...tdStyle,
-    cursor: "pointer",
-  };
+  const pendingCount = aggregates.byStatus.PENDING || 0;
+  const siteVisitCount = aggregates.byStatus.SITE_VISIT || 0;
+  const underProcess = aggregates.byStatus.UNDER_PROCESS || 0;
 
-  const statusPillStyle = {
-    display: "inline-block",
-    padding: "0.15rem 0.55rem",
-    borderRadius: "999px",
-    border: "1px solid #e5e7eb",
-    backgroundColor: "#f9fafb",
-    fontSize: "0.8rem",
-    color: "#374151",
-    whiteSpace: "nowrap",
-  };
-
-  const primaryButtonStyle = {
-    padding: "0.35rem 0.85rem",
-    fontSize: "0.85rem",
-    borderRadius: "999px",
-    border: "none",
-    backgroundColor: "#2563eb",
-    color: "#ffffff",
-    cursor: "pointer",
-  };
-
-  const secondaryButtonStyle = {
-    padding: "0.35rem 0.85rem",
-    fontSize: "0.85rem",
-    borderRadius: "999px",
-    border: "1px solid #d1d5db",
-    backgroundColor: "#ffffff",
-    cursor: "pointer",
-  };
+  const greetingName = user?.full_name || user?.name || user?.email || (isAdmin ? "Admin" : "User");
 
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: "1rem" }}>
+    <div style={page}>
+      {/* Header */}
+      <div style={headerRow}>
         <div>
-          <h1 style={{ marginBottom: "0.25rem" }}>Home</h1>
-          <div style={subtleTextStyle}>
-            Welcome
-            {user?.full_name ? `, ${user.full_name}` : user?.email ? `, ${user.email}` : ""}.
+          <h1 style={title}>Home</h1>
+          <div style={subtitle}>
+            Welcome, <span style={{ color: "#111827", fontWeight: 900 }}>{greetingName}</span>.
+            {!isAdmin ? " (Employee view)" : ""}
           </div>
         </div>
 
-        <button type="button" onClick={fetchAssignments} style={secondaryButtonStyle}>
-          Refresh
-        </button>
+        <div style={rightActions}>
+          <button type="button" style={btn} onClick={fetchAssignments} disabled={loading}>
+            {loading ? "Refreshing…" : "Refresh"}
+          </button>
+          <button type="button" style={btnPrimary} onClick={() => navigate("/assignments/new")}>
+            + New Assignment
+          </button>
+        </div>
       </div>
 
-      {loading && <p style={{ marginTop: "0.75rem" }}>Loading dashboard…</p>}
-      {error && <p style={{ marginTop: "0.75rem", color: "red" }}>{error}</p>}
-
-      <div style={cardsWrapperStyle}>
-        <div style={cardStyle}>
-          <div style={cardTitleStyle}>Total Assignments</div>
-          <div style={cardValueStyle}>{aggregates.totalAssignments}</div>
-        </div>
-
-        <div style={cardStyle}>
-          <div style={cardTitleStyle}>Active Assignments</div>
-          <div style={cardValueStyle}>{aggregates.activeAssignmentsCount}</div>
-        </div>
-
-        <div style={cardStyle}>
-          <div style={cardTitleStyle}>Pending</div>
-          <div style={cardValueStyle}>{aggregates.byStatus.PENDING || 0}</div>
-        </div>
-
-        <div style={cardStyle}>
-          <div style={cardTitleStyle}>Site Visits</div>
-          <div style={cardValueStyle}>{aggregates.byStatus.SITE_VISIT || 0}</div>
-        </div>
-
-        {isAdmin && (
-          <>
-            <div style={cardStyle}>
-              <div style={cardTitleStyle}>Total Fees (₹)</div>
-              <div style={cardValueStyle}>{(aggregates.totalFees || 0).toLocaleString("en-IN")}</div>
-            </div>
-
-            <div style={{ ...cardStyle, flex: "2 1 380px", minWidth: "280px" }}>
-              <div style={cardTitleStyle}>Pending Fees (₹)</div>
-              <div style={cardValueStyle}>{(aggregates.pendingFees || 0).toLocaleString("en-IN")}</div>
-            </div>
-
-            <div style={{ ...cardStyle, flex: "2 1 380px", minWidth: "280px" }}>
-              <div style={cardTitleStyle}>Collected Fees (₹)</div>
-              <div style={cardValueStyle}>{(aggregates.collectedFees || 0).toLocaleString("en-IN")}</div>
-            </div>
-          </>
-        )}
-      </div>
-
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.25rem" }}>
-        <h2 style={{ margin: 0 }}>Recent Assignments</h2>
-        <button type="button" onClick={() => navigate("/assignments/new")} style={primaryButtonStyle}>
-          + New Assignment
-        </button>
-      </div>
-
-      <div style={tableWrapperStyle}>
-        {recentAssignments.length === 0 ? (
-          <div style={{ padding: "0.9rem 1rem" }}>
-            <div style={subtleTextStyle}>No assignments yet. Create one to get started.</div>
+      {/* Auth banner (manual action, no loops) */}
+      {authError && (
+        <div style={banner("warn")}>
+          <div style={{ fontWeight: 900 }}>{authError}</div>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <button type="button" style={btn} onClick={() => navigate("/login", { replace: true })}>
+              Go to Login
+            </button>
           </div>
-        ) : (
-          <table style={tableStyle}>
-            <thead>
-              <tr>
-                <th style={thStyle}>ID</th>
-                <th style={thStyle}>Code</th>
-                <th style={thStyle}>Case</th>
-                <th style={thStyle}>Bank / Client</th>
-                <th style={thStyle}>Borrower</th>
-                <th style={thStyle}>Status</th>
-                {isAdmin && <th style={thStyle}>Fees (₹)</th>}
-                {isAdmin && <th style={thStyle}>Paid?</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {recentAssignments.map((a) => (
-                <tr key={a.id}>
-                  <td style={clickableTdStyle} onClick={() => navigate(`/assignments/${a.id}`)}>
-                    {a.id}
-                  </td>
-                  <td style={clickableTdStyle} onClick={() => navigate(`/assignments/${a.id}`)}>
-                    {a.assignment_code}
-                  </td>
-                  <td style={tdStyle}>{a.case_type || "-"}</td>
-                  <td style={tdStyle}>{a.bank_name || a.valuer_client_name || "-"}</td>
-                  <td style={tdStyle}>{a.borrower_name || "-"}</td>
-                  <td style={tdStyle}>
-                    <span style={statusPillStyle}>{formatStatus(a.status)}</span>
-                  </td>
-                  {isAdmin && <td style={tdStyle}>{(a.fees ?? 0).toLocaleString("en-IN")}</td>}
-                  {isAdmin && <td style={tdStyle}>{a.is_paid ? "Yes" : "No"}</td>}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {!isAdmin && (
-        <div style={{ marginTop: "0.9rem", ...subtleTextStyle }}>
-          Finance data is hidden for employees.
         </div>
       )}
+
+      {/* Error banner */}
+      {error && (
+        <div style={banner("error")}>
+          <div style={{ fontWeight: 900, whiteSpace: "pre-wrap" }}>{error}</div>
+          <button type="button" style={btn} onClick={fetchAssignments} disabled={loading}>
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Summary cards */}
+      <div style={grid}>
+        <div style={card}>
+          <div style={cardLabel}>Total Assignments</div>
+          <div style={cardValue}>{aggregates.totalAssignments}</div>
+        </div>
+
+        <div style={card}>
+          <div style={cardLabel}>Active Assignments</div>
+          <div style={cardValue}>{aggregates.activeAssignmentsCount}</div>
+        </div>
+
+        <div style={card}>
+          <div style={cardLabel}>Pending</div>
+          <div style={cardValue}>{pendingCount}</div>
+        </div>
+
+        <div style={card}>
+          <div style={cardLabel}>Site Visits</div>
+          <div style={cardValue}>{siteVisitCount}</div>
+        </div>
+
+        <div style={card}>
+          <div style={cardLabel}>Under Process</div>
+          <div style={cardValue}>{underProcess}</div>
+        </div>
+
+        {isAdmin ? (
+          <div style={card}>
+            <div style={cardLabel}>Pending Fees (₹)</div>
+            <div style={cardValue}>{formatMoney(aggregates.pendingFees)}</div>
+            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>
+              Collected: ₹{formatMoney(aggregates.collectedFees)} / Total: ₹{formatMoney(aggregates.totalFees)}
+            </div>
+          </div>
+        ) : (
+          <div style={card}>
+            <div style={cardLabel}>Finance</div>
+            <div style={{ fontSize: "0.95rem", color: "#6b7280", marginTop: "0.2rem" }}>
+              Fees & payments are hidden for employees.
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Recent + Playbook */}
+      <div style={split}>
+        {/* Recent assignments */}
+        <div style={panel}>
+          <div style={panelHeader}>
+            <h2 style={panelTitle}>Recent Assignments</h2>
+            <button type="button" style={btn} onClick={() => navigate("/assignments")}>
+              View all →
+            </button>
+          </div>
+
+          {loading ? (
+            <div style={empty}>Loading dashboard…</div>
+          ) : recentAssignments.length === 0 ? (
+            <div style={empty}>
+              No assignments yet. Create one to get started.
+              <div style={{ marginTop: "0.6rem" }}>
+                <button type="button" style={btnPrimary} onClick={() => navigate("/assignments/new")}>
+                  + Create first assignment
+                </button>
+              </div>
+            </div>
+          ) : (
+            <table style={table}>
+              <thead>
+                <tr>
+                  <th style={th}>ID</th>
+                  <th style={th}>Code</th>
+                  <th style={th}>Bank / Client</th>
+                  <th style={th}>Borrower</th>
+                  <th style={th}>Status</th>
+                  {isAdmin && <th style={th}>Fees (₹)</th>}
+                  {isAdmin && <th style={th}>Paid?</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {recentAssignments.map((a) => (
+                  <tr key={a.id} title="Open assignment">
+                    <td style={linkCell} onClick={() => navigate(`/assignments/${a.id}`)}>
+                      {a.id}
+                    </td>
+                    <td style={td}>{safeText(a.assignment_code)}</td>
+                    <td style={td}>{safeText(a.bank_name || a.valuer_client_name)}</td>
+                    <td style={td}>{safeText(a.borrower_name)}</td>
+                    <td style={td}>
+                      <span style={getBadgeStyle(statusKind(a.status))}>{formatStatus(a.status)}</span>
+                    </td>
+                    {isAdmin && <td style={td}>{formatMoney(a.fees)}</td>}
+                    {isAdmin && <td style={td}>{a.is_paid ? "Yes" : "No"}</td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Playbook */}
+        <div style={panel}>
+          <div style={panelHeader}>
+            <h2 style={panelTitle}>Daily Playbook</h2>
+          </div>
+
+          <div style={{ padding: "0.9rem" }}>
+            <div style={{ fontSize: "0.95rem", color: "#111827", fontWeight: 900 }}>
+              What to do next:
+            </div>
+
+            <div style={{ marginTop: "0.65rem", display: "flex", flexDirection: "column", gap: "0.55rem" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem" }}>
+                <span style={{ color: "#374151" }}>1) Create today’s new cases</span>
+                <button style={btn} onClick={() => navigate("/assignments/new")}>Create</button>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem" }}>
+                <span style={{ color: "#374151" }}>2) Update statuses after calls/site visits</span>
+                <button style={btn} onClick={() => navigate("/assignments")}>Open list</button>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem" }}>
+                <span style={{ color: "#374151" }}>3) Watch delays (Pending + Under process)</span>
+                <button style={btn} onClick={() => navigate("/assignments")}>Go</button>
+              </div>
+
+              {isAdmin ? (
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "center" }}>
+                  <span style={{ color: "#374151" }}>4) Collect dues (Completed but unpaid)</span>
+                  <span style={getBadgeStyle("warn")}>Pending ₹{formatMoney(aggregates.pendingFees)}</span>
+                </div>
+              ) : (
+                <div style={{ marginTop: "0.35rem", color: "#6b7280", fontSize: "0.9rem" }}>
+                  Finance is hidden for employees. Focus on execution: visits, docs, report delivery.
+                </div>
+              )}
+
+              <div style={{ marginTop: "0.75rem", borderTop: "1px solid #e5e7eb", paddingTop: "0.75rem" }}>
+                <div style={{ fontSize: "0.82rem", color: "#6b7280", lineHeight: 1.5 }}>
+                  Tip: If you see auth warnings, login once and continue. No repeated refresh spam needed.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Footer note */}
+      <div style={{ fontSize: "0.82rem", color: "#6b7280" }}>
+        If the dashboard looks empty: create your first assignment and everything starts showing up.
+      </div>
     </div>
   );
 }
-
-export default HomePage;

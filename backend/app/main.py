@@ -2,9 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.db import Base, engine
+# Import Base ONLY so models can be registered in metadata.
+from app.db import Base, SessionLocal  # noqa: F401
 
-# IMPORTANT: importing models registers tables before create_all()
+# IMPORTANT: importing models registers tables for Alembic autogenerate
 from app.models import Assignment, File, User, Activity  # noqa: F401
 from app.models.master_data import Bank, Branch, Client, PropertyType  # noqa: F401
 
@@ -13,6 +14,8 @@ from app.routers.auth import router as auth_router
 from app.routers.master_data import router as master_data_router
 from app.routers.files import router as files_router
 from app.routers.activity import router as activity_router
+
+from app.utils.seed_admin import seed_admin_if_missing
 
 app = FastAPI(title="Zen Ops API", version="0.1.0")
 
@@ -29,8 +32,14 @@ app.add_middleware(
 # Serve uploaded files at /uploads/...
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# Auto-create tables (no Alembic yet)
-Base.metadata.create_all(bind=engine)
+
+@app.on_event("startup")
+def startup_seed_admin():
+    db = SessionLocal()
+    try:
+        seed_admin_if_missing(db)
+    finally:
+        db.close()
 
 
 @app.get("/api/health")
