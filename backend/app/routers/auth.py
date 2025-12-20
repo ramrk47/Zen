@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -68,6 +69,36 @@ def _is_admin(user: User) -> bool:
     return _get_user_role(user).upper() == "ADMIN"
 
 
+# Central allowed roles list (keep in sync with frontend ROLE_OPTIONS)
+ALLOWED_ROLES: set[str] = {
+    "ADMIN",
+    "OPS_MANAGER",
+    "ASSISTANT_VALUER",
+    "FIELD_VALUER",
+    "FINANCE",
+    "HR",
+    "EMPLOYEE",
+}
+
+
+def _normalize_role(role: str | None) -> str | None:
+    if role is None:
+        return None
+    r = str(role).strip().upper()
+    return r or None
+
+
+def _has_any_role(user: User, roles: set[str]) -> bool:
+    return _get_user_role(user).upper() in {r.upper() for r in roles}
+
+
+def _require_roles(user: User, roles: set[str]) -> None:
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    if not _has_any_role(user, roles):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access required: " + ", ".join(sorted(roles)))
+
+
 def _ensure_active(user: User) -> None:
     if getattr(user, "is_active", True) is False:
         raise HTTPException(
@@ -117,8 +148,13 @@ def get_current_user(
 
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    if not _is_admin(current_user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    _require_roles(current_user, {"ADMIN"})
+    return current_user
+
+
+def require_admin_or_hr(current_user: User = Depends(get_current_user)) -> User:
+    # HR role is optional today, but this keeps Manage Personnel extensible.
+    _require_roles(current_user, {"ADMIN", "HR"})
     return current_user
 
 
@@ -145,6 +181,25 @@ def _get_admin_from_headers(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin credentials")
 
     return admin
+
+
+# ---------------------------
+# Personnel action schemas
+# ---------------------------
+
+class ToggleActiveRequest(BaseModel):
+    is_active: bool = Field(..., description="Set user active/inactive")
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=6, max_length=128)
+
+
+class UpdateUserRequest(BaseModel):
+    """Admin/HR can update full_name. Only ADMIN can change role."""
+
+    full_name: str | None = Field(default=None, max_length=255)
+    role: str | None = Field(default=None, max_length=20)
 
 
 # ---------------------------
@@ -217,7 +272,7 @@ def me(
 @router.get("/users")
 def list_users(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_admin),
+    current_staff: User = Depends(require_admin_or_hr),
 ):
     """✅ Admin-only: list all users for Manage Personnel."""
     seed_rbac_if_empty(db)
@@ -300,3 +355,116 @@ def create_user(
         "is_active": getattr(user, "is_active", True),
         "created_by": current_admin_user.email,
     }
+
+
+@router.patch("/users/{user_id}")
+def update_user(
+    user_id: int,
+    payload: UpdateUserRequest,
+    db: Session = Depends(get_db),
+    current_staff: User = Depends(require_admin_or_hr),
+):
+    """✅ Admin/HR: update user profile fields (role/full_name)."""
+    seed_rbac_if_empty(db)
+
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    data = payload.model_dump(exclude_unset=True)
+
+    # full_name: ADMIN/HR allowed
+    if "full_name" in data:
+        target.full_name = (data["full_name"].strip() if data["full_name"] else None)
+
+    # role: ADMIN only + validate
+    if "role" in data and data["role"] is not None:
+        if not _is_admin(current_staff):
+            raise HTTPException(status_code=403, detail="Only ADMIN can change roles")
+
+        # Prevent accidental self-demotion/lockout
+        if int(getattr(current_staff, "id", 0) or 0) == int(user_id):
+            raise HTTPException(status_code=400, detail="You cannot change your own role")
+
+        new_role = _normalize_role(data["role"])
+        if not new_role:
+            raise HTTPException(status_code=400, detail="Invalid role")
+        if new_role not in ALLOWED_ROLES:
+            raise HTTPException(status_code=400, detail=f"Invalid role. Allowed: {', '.join(sorted(ALLOWED_ROLES))}")
+
+        target.role = new_role
+
+    db.add(target)
+    db.commit()
+    db.refresh(target)
+
+    return {
+        "id": target.id,
+        "email": target.email,
+        "full_name": getattr(target, "full_name", None),
+        "role": _get_user_role(target),
+        "is_active": getattr(target, "is_active", True),
+    }
+
+
+@router.patch("/users/{user_id}/toggle-active")
+def toggle_user_active(
+    user_id: int,
+    payload: ToggleActiveRequest,
+    db: Session = Depends(get_db),
+    current_staff: User = Depends(require_admin_or_hr),
+):
+    """✅ Admin/HR: activate/deactivate user (soft)."""
+    seed_rbac_if_empty(db)
+
+    # Prevent locking yourself out by mistake.
+    if int(getattr(current_staff, "id", 0) or 0) == int(user_id):
+        raise HTTPException(status_code=400, detail="You cannot change your own active status")
+
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Only ADMIN can deactivate another ADMIN
+    if _get_user_role(target).upper() == "ADMIN" and not _is_admin(current_staff):
+        raise HTTPException(status_code=403, detail="Only ADMIN can change an ADMIN user's active status")
+
+    target.is_active = bool(payload.is_active)
+    db.add(target)
+    db.commit()
+    db.refresh(target)
+
+    return {
+        "id": target.id,
+        "email": target.email,
+        "full_name": getattr(target, "full_name", None),
+        "role": _get_user_role(target),
+        "is_active": getattr(target, "is_active", True),
+    }
+
+
+@router.post("/users/{user_id}/reset-password")
+def reset_user_password(
+    user_id: int,
+    payload: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+    current_staff: User = Depends(require_admin_or_hr),
+):
+    """✅ Admin/HR: reset a user's password."""
+    seed_rbac_if_empty(db)
+
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if _get_user_role(target).upper() == "ADMIN" and not _is_admin(current_staff):
+        raise HTTPException(status_code=403, detail="Only ADMIN can reset an ADMIN password")
+
+    # Optional: allow resetting inactive users too, but keep consistent.
+    new_hash = hash_password(payload.new_password)
+    _set_user_password_hash(target, new_hash)
+
+    db.add(target)
+    db.commit()
+
+    return {"ok": True, "user_id": target.id}
