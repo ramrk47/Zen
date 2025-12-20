@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { getCurrentUser } from "../auth/currentUser";
-
-const API_BASE = "http://127.0.0.1:8000";
+import { apiFetch } from "../api/apiFetch";
 
 /** ---------- helpers ---------- */
 const norm = (s) =>
@@ -51,7 +50,7 @@ function topSimilar(input, items, getName, limit = 5) {
 
 function MasterDataPage() {
   const user = getCurrentUser();
-  const userEmail = (user?.email || "").trim();
+  const sessionKey = String(user?.email || user?.token || "").trim();
   const isAdmin = (user?.role || "").toUpperCase() === "ADMIN";
 
   const [tab, setTab] = useState("BANKS"); // BANKS | CLIENTS | PROPERTY
@@ -83,16 +82,6 @@ function MasterDataPage() {
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkText, setBulkText] = useState("");
 
-  const authedFetch = async (url, opts = {}) => {
-    if (!userEmail) throw new Error("Missing user identity");
-    return fetch(url, {
-      ...opts,
-      headers: {
-        ...(opts.headers || {}),
-        "X-User-Email": userEmail,
-      },
-    });
-  };
 
   const flashOk = (msg) => {
     setOkMsg(msg);
@@ -104,9 +93,9 @@ function MasterDataPage() {
     setError("");
     try {
       const [b, c, p] = await Promise.all([
-        authedFetch(`${API_BASE}/api/master/banks`),
-        authedFetch(`${API_BASE}/api/master/clients`),
-        authedFetch(`${API_BASE}/api/master/property-types`),
+        apiFetch("/api/master/banks"),
+        apiFetch("/api/master/clients"),
+        apiFetch("/api/master/property-types"),
       ]);
       if (!b.ok || !c.ok || !p.ok) throw new Error("Master GET failed");
 
@@ -129,7 +118,7 @@ function MasterDataPage() {
     setBranches([]);
     if (!bankId) return;
     try {
-      const res = await authedFetch(`${API_BASE}/api/master/branches?bank_id=${encodeURIComponent(bankId)}`);
+      const res = await apiFetch(`/api/master/branches?bank_id=${encodeURIComponent(bankId)}`);
       if (!res.ok) return;
       const data = await res.json();
       setBranches(Array.isArray(data) ? data : []);
@@ -141,7 +130,7 @@ function MasterDataPage() {
   useEffect(() => {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userEmail]);
+  }, [sessionKey]);
 
   useEffect(() => {
     loadBranches(selectedBankId);
@@ -190,14 +179,26 @@ function MasterDataPage() {
 
   /** ---------- create ops ---------- */
   const postJson = async (path, body) => {
-    const res = await authedFetch(`${API_BASE}${path}`, {
+    const res = await apiFetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
     if (!res.ok) {
-      const t = await res.text().catch(() => "");
-      throw new Error(t || `HTTP ${res.status}`);
+      // try to read json detail, fallback to text
+      let msg = "";
+      try {
+        const ct = res.headers.get("content-type") || "";
+        if (ct.includes("application/json")) {
+          const j = await res.json();
+          msg = typeof j?.detail === "string" ? j.detail : JSON.stringify(j);
+        } else {
+          msg = await res.text();
+        }
+      } catch {
+        msg = "";
+      }
+      throw new Error(msg || `HTTP ${res.status}`);
     }
     return res.json().catch(() => ({}));
   };
