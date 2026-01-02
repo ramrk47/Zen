@@ -24,7 +24,7 @@ class Assignment(Base):
     # Public-facing code, e.g. "VAL/2025/0012"
     assignment_code = Column(String(64), unique=True, index=True, nullable=False)
 
-    # "BANK" / "EXTERNAL_VALUER" / "DIRECT_CLIENT"
+    # BANK / EXTERNAL_VALUER / DIRECT_CLIENT
     case_type = Column(String(32), nullable=False, default="BANK")
 
     # -------------------------
@@ -43,7 +43,6 @@ class Assignment(Base):
         index=True,
     )
 
-    # For DIRECT_CLIENT and EXTERNAL_VALUER (same Clients table for now)
     client_id = Column(
         Integer,
         ForeignKey("clients.id", ondelete="SET NULL"),
@@ -59,7 +58,7 @@ class Assignment(Base):
     )
 
     # -------------------------
-    # Legacy string fields (kept for backward compatibility)
+    # Legacy string fields (BACKWARD COMPATIBLE)
     # -------------------------
     bank_name = Column(String(128), nullable=True)
     branch_name = Column(String(128), nullable=True)
@@ -70,36 +69,37 @@ class Assignment(Base):
     phone = Column(String(32), nullable=True)
     address = Column(Text, nullable=True)
 
-    land_area = Column(Float, nullable=True)      # sqft
-    builtup_area = Column(Float, nullable=True)   # sqft
+    land_area = Column(Float, nullable=True)
+    builtup_area = Column(Float, nullable=True)
 
     status = Column(String(32), nullable=False, default="SITE_VISIT")
 
-    assigned_to = Column(String(128), nullable=True)  # later can become FK to users
+    # TEMP: string-based assignment (no FK yet)
+    assigned_to = Column(String(128), nullable=True)
 
     site_visit_date = Column(Date, nullable=True)
     report_due_date = Column(Date, nullable=True)
 
-    fees = Column(Integer, nullable=True)  # ₹
+    fees = Column(Integer, nullable=True)
     is_paid = Column(Boolean, nullable=False, default=False)
 
     notes = Column(Text, nullable=True)
 
-    # Files attached to this assignment
+    # -------------------------
+    # Relationships
+    # -------------------------
     files = relationship(
         "File",
         back_populates="assignment",
         cascade="all, delete-orphan",
     )
 
-    # NEW: timeline / audit trail
     activities = relationship(
         "Activity",
         back_populates="assignment",
         cascade="all, delete-orphan",
     )
 
-    # Optional relationships (not required yet, but useful later)
     bank = relationship("Bank", foreign_keys=[bank_id])
     branch = relationship("Branch", foreign_keys=[branch_id])
     client = relationship("Client", foreign_keys=[client_id])

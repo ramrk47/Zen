@@ -1,3 +1,4 @@
+# backend/app/routers/files.py
 import os
 import uuid
 from typing import List
@@ -12,6 +13,8 @@ from app.models.assignment import Assignment
 from app.models.user import User
 from app.routers.auth import get_current_user
 from app.schemas.file import FileRead
+
+# ✅ NEW: activity logger
 from app.utils.activity import log_activity
 
 router = APIRouter(prefix="/api/files", tags=["files"])
@@ -35,7 +38,7 @@ async def upload_file(
     ext = os.path.splitext(original_name)[1].lower()
 
     stored_name = f"{assignment_id}_{uuid.uuid4().hex}{ext}"
-    disk_path = os.path.join(UPLOAD_DIR, stored_name)
+    disk_path = os.path.join(UPLOAD_DIR, stored_name)  # uploads/<stored_name>
 
     content = await uploaded.read()
     size_bytes = len(content)
@@ -46,7 +49,7 @@ async def upload_file(
     entry = File(
         assignment_id=assignment_id,
         filename=original_name,
-        filepath=f"{UPLOAD_DIR}/{stored_name}",
+        filepath=f"{UPLOAD_DIR}/{stored_name}",  # keep relative path
         stored_name=stored_name,
         content_type=uploaded.content_type,
         size_bytes=size_bytes,
@@ -55,7 +58,7 @@ async def upload_file(
     db.commit()
     db.refresh(entry)
 
-    # Audit log
+    # ✅ ACTIVITY LOG
     log_activity(
         db,
         assignment_id=assignment_id,
@@ -98,7 +101,7 @@ def download_file(
     if not f:
         raise HTTPException(status_code=404, detail="File not found")
 
-    # Ensure parent assignment exists (prevents orphan leaks)
+    # Safety: ensure assignment exists (prevents orphan leaks)
     a = db.query(Assignment).get(f.assignment_id)
     if not a:
         raise HTTPException(status_code=404, detail="Assignment not found")
@@ -107,7 +110,9 @@ def download_file(
     if not rel_path:
         raise HTTPException(status_code=404, detail="File missing on server")
 
+    # Resolve relative path safely
     disk_path = rel_path if os.path.isabs(rel_path) else os.path.abspath(rel_path)
+
     if not os.path.exists(disk_path):
         raise HTTPException(status_code=404, detail="File missing on server")
 

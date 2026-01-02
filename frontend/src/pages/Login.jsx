@@ -78,8 +78,7 @@ export default function Login() {
         role: user?.role || "EMPLOYEE",
         is_active: user?.is_active ?? true,
         permissions: Array.isArray(user?.permissions) ? user.permissions : [],
-        access_token: accessToken,
-        token_type: tokenType,
+        token: accessToken,
       });
 
       navigate("/", { replace: true });

@@ -1,4 +1,6 @@
 # backend/app/schemas/assignment.py
+from __future__ import annotations
+
 from datetime import date, datetime
 from typing import Optional
 
@@ -8,7 +10,7 @@ from pydantic import BaseModel, Field
 class AssignmentBase(BaseModel):
     case_type: str = Field(..., example="BANK")  # BANK / EXTERNAL_VALUER / DIRECT_CLIENT
 
-    # NEW: master-data IDs (preferred)
+    # Preferred: master-data IDs
     bank_id: Optional[int] = None
     branch_id: Optional[int] = None
     client_id: Optional[int] = None
@@ -22,13 +24,14 @@ class AssignmentBase(BaseModel):
 
     borrower_name: Optional[str] = None
     phone: Optional[str] = None
-
     address: Optional[str] = None
 
     land_area: Optional[float] = None
     builtup_area: Optional[float] = None
 
     status: str = Field(default="SITE_VISIT")
+
+    # ✅ Keep ONLY legacy assigned_to for now (DB column exists)
     assigned_to: Optional[str] = None
 
     site_visit_date: Optional[date] = None
@@ -67,6 +70,7 @@ class AssignmentUpdate(BaseModel):
 
     status: Optional[str] = None
     assigned_to: Optional[str] = None
+
     site_visit_date: Optional[date] = None
     report_due_date: Optional[date] = None
 

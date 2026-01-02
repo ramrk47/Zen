@@ -16,38 +16,24 @@ const STATUS_OPTIONS = [
 
 const CASE_TYPE_OPTIONS = ["BANK", "EXTERNAL_VALUER", "DIRECT_CLIENT"];
 
-// ---- Notes-embedded metadata (backend-safe) ----
-const NOTES_META_TAG = "VALOPS_META_V1";
-
-function stripMetaFromNotes(notes) {
-  const s = String(notes || "");
-  const start = s.indexOf(`<!-- ${NOTES_META_TAG} `);
-  if (start < 0) return s;
-  const end = s.indexOf("-->", start);
-  if (end < 0) return s;
-  const before = s.slice(0, start).trimEnd();
-  const after = s.slice(end + 3).trimStart();
-  return [before, after].filter(Boolean).join("\n\n").trim();
-}
-
-function upsertMetaIntoNotes(notes, metaObj) {
-  const clean = stripMetaFromNotes(notes || "");
-  const block = `<!-- ${NOTES_META_TAG} ${JSON.stringify(metaObj)} -->`;
-  return clean ? `${clean}\n\n${block}` : block;
-}
-
-function computeBuiltupTotal(levels) {
-  const list = Array.isArray(levels) ? levels : [];
-  const sum = list.reduce((acc, cur) => acc + (Number(cur?.area) || 0), 0);
-  return sum ? String(sum) : "";
-}
-
 function NewAssignmentPage() {
   const navigate = useNavigate();
 
   const user = getCurrentUser();
   const userEmail = (user?.email || "").trim();
   const isAdmin = (user?.role || "").toUpperCase() === "ADMIN";
+
+  const DRAFT_KEY = `new_assignment_draft_v1:${userEmail || "anon"}`;
+  const DRAFT_DEBOUNCE_MS = 400;
+
+  const safeParseDraft = (raw) => {
+    try {
+      const obj = JSON.parse(String(raw || ""));
+      return obj && typeof obj === "object" ? obj : null;
+    } catch {
+      return null;
+    }
+  };
 
   // core fields
   const [caseType, setCaseType] = useState("BANK");
@@ -70,11 +56,6 @@ function NewAssignmentPage() {
   const [address, setAddress] = useState("");
   const [landArea, setLandArea] = useState("");
   const [builtupArea, setBuiltupArea] = useState("");
-  // multi-level built-up + property rates (stored in Notes meta)
-  const [multiLevelEnabled, setMultiLevelEnabled] = useState(false);
-  const [builtupLevels, setBuiltupLevels] = useState([{ label: "Ground Floor", area: "" }]);
-  const [landRate, setLandRate] = useState("");
-  const [builtRate, setBuiltRate] = useState("");
   const [status, setStatus] = useState("PENDING");
 
   // admin-only fields (UI)
@@ -241,18 +222,116 @@ function NewAssignmentPage() {
     }
   }, [isAdmin]);
 
-  // Keep built-up total in sync when multi-level is enabled
-  useEffect(() => {
-    if (!multiLevelEnabled) return;
-    const total = computeBuiltupTotal(builtupLevels);
-    setBuiltupArea(total);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [multiLevelEnabled, builtupLevels]);
-
   const handleFilesChange = (e) => {
-    const list = Array.from(e.target.files || []);
-    setFiles(list);
+    const picked = Array.from(e.target.files || []);
+    if (picked.length === 0) return;
+
+    // Append instead of replace; de-dupe by name+size+lastModified
+    setFiles((prev) => {
+      const base = Array.isArray(prev) ? prev : [];
+      const seen = new Set(base.map((f) => `${f.name}::${f.size}::${f.lastModified}`));
+      const next = [...base];
+      for (const f of picked) {
+        const key = `${f.name}::${f.size}::${f.lastModified}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          next.push(f);
+        }
+      }
+      return next;
+    });
+
+    // Allow re-picking the same file again in the future
+    e.target.value = "";
   };
+  // Restore draft on first load
+  useEffect(() => {
+    // restore draft once
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      const d = safeParseDraft(raw);
+      if (!d) return;
+
+      // core
+      if (d.caseType) setCaseType(d.caseType);
+
+      // selected IDs
+      if (d.bankId !== undefined) setBankId(d.bankId);
+      if (d.branchId !== undefined) setBranchId(d.branchId);
+      if (d.clientId !== undefined) setClientId(d.clientId);
+      if (d.propertyTypeId !== undefined) setPropertyTypeId(d.propertyTypeId);
+
+      // other fields
+      if (d.borrowerName !== undefined) setBorrowerName(d.borrowerName);
+      if (d.phone !== undefined) setPhone(d.phone);
+      if (d.address !== undefined) setAddress(d.address);
+      if (d.landArea !== undefined) setLandArea(d.landArea);
+      if (d.builtupArea !== undefined) setBuiltupArea(d.builtupArea);
+      if (d.status) setStatus(d.status);
+      if (d.notes !== undefined) setNotes(d.notes);
+      if (d.locationLink !== undefined) setLocationLink(d.locationLink);
+
+      // admin-only
+      if ((user?.role || "").toUpperCase() === "ADMIN") {
+        if (d.fees !== undefined) setFees(d.fees);
+        if (d.isPaid !== undefined) setIsPaid(!!d.isPaid);
+      }
+
+      // NOTE: Files cannot be restored after refresh for security reasons.
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [DRAFT_KEY]);
+
+  // Autosave draft (debounced)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        const draft = {
+          caseType,
+          bankId,
+          branchId,
+          clientId,
+          propertyTypeId,
+          borrowerName,
+          phone,
+          address,
+          landArea,
+          builtupArea,
+          status,
+          notes,
+          locationLink,
+          // admin
+          fees,
+          isPaid,
+          savedAt: new Date().toISOString(),
+        };
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+      } catch {
+        // ignore
+      }
+    }, DRAFT_DEBOUNCE_MS);
+
+    return () => clearTimeout(t);
+  }, [
+    DRAFT_KEY,
+    caseType,
+    bankId,
+    branchId,
+    clientId,
+    propertyTypeId,
+    borrowerName,
+    phone,
+    address,
+    landArea,
+    builtupArea,
+    status,
+    notes,
+    locationLink,
+    fees,
+    isPaid,
+  ]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -304,20 +383,7 @@ function NewAssignmentPage() {
         land_area: landArea ? Number(landArea) : null,
         builtup_area: builtupArea ? Number(builtupArea) : null,
         status,
-        // Embed multi-level + rates safely in Notes metadata (backend-safe)
-        notes: upsertMetaIntoNotes(notes || "", {
-          multi_level: {
-            enabled: !!multiLevelEnabled,
-            levels: (Array.isArray(builtupLevels) ? builtupLevels : []).map((x) => ({
-              label: String(x?.label || ""),
-              area: x?.area ?? "",
-            })),
-          },
-          rates: {
-            land_rate: landRate ?? "",
-            built_rate: builtRate ?? "",
-          },
-        }) || null,
+        notes: notes || null,
 
         // UI-only for now (backend can ignore safely if schema doesn’t include it)
         // location_link: locationLink || null,
@@ -345,6 +411,12 @@ function NewAssignmentPage() {
       const created = await res.json();
 
       if (created?.id) {
+        // clear draft before file upload/navigate
+        try {
+          localStorage.removeItem(DRAFT_KEY);
+        } catch {
+          // ignore
+        }
         // upload selected files before navigating
         await uploadSelectedFiles(created.id);
         navigate(`/assignments/${created.id}`);
@@ -577,134 +649,10 @@ function NewAssignmentPage() {
 
             <div>
               <div style={labelStyle}>Built-up Area (sqft)</div>
-              <input
-                type="number"
-                style={{ ...inputStyle, opacity: multiLevelEnabled ? 0.6 : 1 }}
-                value={builtupArea}
-                onChange={(e) => setBuiltupArea(e.target.value)}
-                disabled={!userEmail || multiLevelEnabled}
-              />
-              {multiLevelEnabled ? <div style={hintStyle}>Auto-calculated from floor-wise entries below.</div> : null}
+              <input type="number" style={inputStyle} value={builtupArea} onChange={(e) => setBuiltupArea(e.target.value)} disabled={!userEmail} />
             </div>
           </div>
         </div>
-
-          {/* Multi-level built-up + rates */}
-          <div style={{ marginTop: "0.85rem", borderTop: "1px solid #f3f4f6", paddingTop: "0.85rem" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
-              <div style={{ fontSize: "0.95rem", fontWeight: 600 }}>Built-up details & property rates</div>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.9rem" }}>
-                <input
-                  type="checkbox"
-                  checked={multiLevelEnabled}
-                  onChange={(e) => {
-                    const on = e.target.checked;
-                    setMultiLevelEnabled(on);
-                    if (on) {
-                      const total = computeBuiltupTotal(builtupLevels);
-                      setBuiltupArea(total);
-                    }
-                  }}
-                  disabled={!userEmail}
-                />
-                Multi-level built-up
-              </label>
-            </div>
-
-            {multiLevelEnabled ? (
-              <div style={{ marginTop: "0.75rem" }}>
-                <div style={hintStyle}>Add floor labels and areas. Total will update automatically.</div>
-
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem", marginTop: "0.5rem" }}>
-                  {builtupLevels.map((lv, idx) => (
-                    <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 220px 90px", gap: "0.5rem", alignItems: "center" }}>
-                      <input
-                        style={inputStyle}
-                        placeholder="Label (e.g., Ground Floor, First Floor)"
-                        value={lv.label}
-                        onChange={(e) => {
-                          const next = [...builtupLevels];
-                          next[idx] = { ...next[idx], label: e.target.value };
-                          setBuiltupLevels(next);
-                        }}
-                        disabled={!userEmail}
-                      />
-                      <input
-                        type="number"
-                        style={inputStyle}
-                        placeholder="Built-up (sqft)"
-                        value={lv.area}
-                        onChange={(e) => {
-                          const next = [...builtupLevels];
-                          next[idx] = { ...next[idx], area: e.target.value };
-                          setBuiltupLevels(next);
-                          setBuiltupArea(computeBuiltupTotal(next));
-                        }}
-                        disabled={!userEmail}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const next = builtupLevels.filter((_, i) => i !== idx);
-                          const safe = next.length ? next : [{ label: "Ground Floor", area: "" }];
-                          setBuiltupLevels(safe);
-                          setBuiltupArea(computeBuiltupTotal(safe));
-                        }}
-                        disabled={!userEmail}
-                        style={{
-                          padding: "0.35rem 0.6rem",
-                          fontSize: "0.85rem",
-                          borderRadius: "4px",
-                          border: "1px solid #d1d5db",
-                          backgroundColor: "#fff",
-                          cursor: !userEmail ? "default" : "pointer",
-                        }}
-                        title="Remove row"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                <div style={{ marginTop: "0.65rem", display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
-                  <button
-                    type="button"
-                    onClick={() => setBuiltupLevels([...builtupLevels, { label: `Floor ${builtupLevels.length + 1}`, area: "" }])}
-                    disabled={!userEmail}
-                    style={{
-                      padding: "0.35rem 0.6rem",
-                      fontSize: "0.85rem",
-                      borderRadius: "4px",
-                      border: "1px solid #d1d5db",
-                      backgroundColor: "#f9fafb",
-                      cursor: !userEmail ? "default" : "pointer",
-                    }}
-                  >
-                    + Add level
-                  </button>
-                  <div style={{ fontSize: "0.85rem", color: "#374151" }}>
-                    Total built-up: <b>{builtupArea || "-"}</b>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            <div style={{ marginTop: "0.85rem" }}>
-              <div style={gridTwoCol}>
-                <div>
-                  <div style={labelStyle}>Land rate (₹/sqft)</div>
-                  <input type="number" style={inputStyle} value={landRate} onChange={(e) => setLandRate(e.target.value)} disabled={!userEmail} />
-                  <div style={hintStyle}>Optional. Stored in Notes metadata.</div>
-                </div>
-                <div>
-                  <div style={labelStyle}>Built-up rate (₹/sqft)</div>
-                  <input type="number" style={inputStyle} value={builtRate} onChange={(e) => setBuiltRate(e.target.value)} disabled={!userEmail} />
-                  <div style={hintStyle}>Optional. Stored in Notes metadata.</div>
-                </div>
-              </div>
-            </div>
-          </div>
 
         {/* Fees & Notes */}
         <div style={cardStyle}>
@@ -749,6 +697,26 @@ function NewAssignmentPage() {
             <div>
               <div style={labelStyle}>Attach Files (photos, docs)</div>
               <input type="file" multiple onChange={handleFilesChange} disabled={!userEmail || saving || uploadingFiles} />
+              {files.length > 0 ? (
+                <div style={{ marginTop: "0.35rem", display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+                  <button
+                    type="button"
+                    onClick={() => setFiles([])}
+                    disabled={saving || uploadingFiles}
+                    style={{
+                      padding: "0.25rem 0.6rem",
+                      fontSize: "0.82rem",
+                      borderRadius: "999px",
+                      border: "1px solid #d1d5db",
+                      backgroundColor: "#fff",
+                      cursor: saving || uploadingFiles ? "default" : "pointer",
+                    }}
+                    title="Remove all selected files"
+                  >
+                    Clear selected files
+                  </button>
+                </div>
+              ) : null}
               <div style={hintStyle}>Files will upload automatically after you click <b>Create Assignment</b>.</div>
 
               {uploadingFiles && (
@@ -764,6 +732,9 @@ function NewAssignmentPage() {
               {files.length > 0 && (
                 <div style={filesListStyle}>
                   Selected:
+                  <div style={{ fontSize: "0.75rem", color: "#6b7280", marginTop: "0.15rem" }}>
+                    Note: selected files won’t survive a page refresh (browser limitation).
+                  </div>
                   <ul>
                     {files.map((f) => (
                       <li key={f.name}>

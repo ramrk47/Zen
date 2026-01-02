@@ -1,11 +1,34 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getCurrentUser } from "../auth/currentUser";
+import { apiFetch } from "../api/apiFetch";
 
-function SettingsPage() {
+function AdminDashboardPage() {
   const navigate = useNavigate();
   const user = getCurrentUser();
-  const isAdmin = user?.role === "ADMIN";
+  const roleUpper = (user?.role || "").toUpperCase();
+
+  // Prefer backend capabilities so UI stays consistent with enforcement
+  const [capabilities, setCapabilities] = useState(null);
+  const [capLoading, setCapLoading] = useState(false);
+  const [capError, setCapError] = useState("");
+
+  const cap = (key) => {
+    const src = capabilities || {};
+    if (typeof src[key] === "boolean") return src[key];
+    if (src.capabilities && typeof src.capabilities[key] === "boolean") return src.capabilities[key];
+    return null;
+  };
+
+  const canViewUsers = cap("can_view_users") ?? (roleUpper === "ADMIN" || roleUpper === "HR" || roleUpper === "OPS_MANAGER");
+  const canCreateUsers = cap("can_create_users") ?? (roleUpper === "ADMIN");
+  const canUpdateUsers = cap("can_update_users") ?? (roleUpper === "ADMIN" || roleUpper === "HR");
+  const canChangeRoles = cap("can_change_roles") ?? (roleUpper === "ADMIN");
+  const opsReadOnly = cap("ops_read_only") ?? (roleUpper === "OPS_MANAGER");
+
+  const isAdmin = roleUpper === "ADMIN";
+  const isHR = roleUpper === "HR";
+  const isOps = roleUpper === "OPS_MANAGER";
 
   const pageStyle = {
     maxWidth: "900px",
@@ -62,16 +85,48 @@ function SettingsPage() {
     cursor: "not-allowed",
   };
 
+  useEffect(() => {
+    if (!user?.email) return;
+    let alive = true;
+
+    (async () => {
+      setCapLoading(true);
+      setCapError("");
+      try {
+        const res = await apiFetch("/api/auth/capabilities");
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          throw new Error(text || `Failed to load capabilities (HTTP ${res.status})`);
+        }
+        const data = await res.json().catch(() => ({}));
+        if (!alive) return;
+        setCapabilities(data);
+      } catch (e) {
+        if (!alive) return;
+        setCapabilities(null);
+        setCapError(e?.message || "Failed to load capabilities.");
+      } finally {
+        if (!alive) return;
+        setCapLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.email]);
+
   return (
     <div style={pageStyle}>
       <div>
-        <h1 style={{ marginBottom: "0.25rem" }}>Settings</h1>
+        <h1 style={{ marginBottom: "0.25rem" }}>Admin</h1>
         <div style={{ color: "#6b7280", fontSize: "0.9rem" }}>
           Logged in as <b>{user?.email || "User"}</b> ({user?.role || "—"})
         </div>
       </div>
 
-      {!isAdmin && (
+      {(capLoading || capError || !isAdmin) && (
         <div
           style={{
             padding: "0.75rem 1rem",
@@ -80,9 +135,15 @@ function SettingsPage() {
             border: "1px solid #e5e7eb",
             color: "#6b7280",
             fontSize: "0.9rem",
+            display: "flex",
+            gap: "0.75rem",
+            alignItems: "center",
+            flexWrap: "wrap",
           }}
         >
-          You are logged in as an employee. Admin settings are hidden.
+          {capLoading ? <span>Loading access…</span> : null}
+          {capError ? <span>⚠️ Access info: {capError}</span> : null}
+          {!isAdmin ? <span>You are not an admin. Admin tools are hidden.</span> : null}
         </div>
       )}
 
@@ -91,10 +152,27 @@ function SettingsPage() {
         <div style={cardStyle}>
           <div style={cardTitleStyle}>Manage Personnel</div>
           <div style={cardDescStyle}>
-            Create employee/admin accounts. Later: deactivate users, reset passwords, role changes.
+            Create employee/admin accounts. Deactivate users, reset passwords, role changes.
           </div>
           {isAdmin ? (
-            <button style={btnStyle} onClick={() => navigate("/settings/personnel")}>
+            <button style={btnStyle} onClick={() => navigate("/admin/personnel")}>
+              Open
+            </button>
+          ) : (
+            <button style={disabledBtnStyle} disabled>
+              Admin only
+            </button>
+          )}
+        </div>
+
+        {/* WORKLOAD (quick access) */}
+        <div style={cardStyle}>
+          <div style={cardTitleStyle}>Workload</div>
+          <div style={cardDescStyle}>
+            Global workload overview + quick jump into Assignments.
+          </div>
+          {isAdmin ? (
+            <button style={btnStyle} onClick={() => navigate("/admin/workload")}>
               Open
             </button>
           ) : (
@@ -111,7 +189,7 @@ function SettingsPage() {
             Manage banks, bank account details, and branches with contacts & addresses.
           </div>
           {isAdmin ? (
-            <button style={btnStyle} onClick={() => navigate("/settings/banks")}>
+            <button style={btnStyle} onClick={() => navigate("/admin/banks")}>
               Open
             </button>
           ) : (
@@ -128,7 +206,7 @@ function SettingsPage() {
             Maintain Clients and Property Types used in New Assignment dropdowns.
           </div>
           {isAdmin ? (
-            <button style={btnStyle} onClick={() => navigate("/settings/master")}>
+            <button style={btnStyle} onClick={() => navigate("/admin/master")}>
               Open
             </button>
           ) : (
@@ -151,10 +229,10 @@ function SettingsPage() {
       </div>
 
       <div style={{ fontSize: "0.85rem", color: "#6b7280", marginTop: "0.5rem" }}>
-        Flow: Settings → Banks → Bank → Branches.
+        Flow: Admin → Personnel / Banks / Master Data.
       </div>
     </div>
   );
 }
 
-export default SettingsPage;
+export default AdminDashboardPage;

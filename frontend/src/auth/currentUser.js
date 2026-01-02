@@ -1,7 +1,8 @@
-// src/auth/currentUser.js
+// frontend/src/auth/currentUser.js
+
 const STORAGE_KEY = "zenops_user";
 
-// Legacy keys seen in your screenshot / old builds
+// Legacy keys seen in older builds
 const LEGACY = {
   token: ["vb_token", "access_token", "token"],
   role: ["vb_role", "role"],
@@ -30,8 +31,11 @@ function normalizeUser(u) {
 
   const email = (u.email || "").toString().trim().toLowerCase();
   const role = (u.role || "").toString().trim();
-  const full_name = u.full_name ?? u.name ?? null;
-  const token = (u.token || u.access_token || "").toString().trim();
+
+  // We standardize the token field name to `token` (single source of truth)
+  const token = (u.token || u.access_token || u.accessToken || "").toString().trim();
+
+  const full_name = u.full_name ?? u.fullName ?? u.name ?? null;
 
   return {
     id: Number(u.id || 0) || 0,
@@ -73,8 +77,10 @@ export function setCurrentUser(user) {
 export function clearCurrentUser() {
   localStorage.removeItem(STORAGE_KEY);
 
-  // Optional: also clear legacy keys so you don’t keep relapsing
-  Object.values(LEGACY).flat().forEach((k) => localStorage.removeItem(k));
+  // Also clear legacy keys so you don’t keep relapsing
+  Object.values(LEGACY)
+    .flat()
+    .forEach((k) => localStorage.removeItem(k));
 }
 
 // Backward compatibility only.

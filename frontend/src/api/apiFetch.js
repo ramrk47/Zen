@@ -19,24 +19,21 @@ async function readErrorDetail(res) {
 }
 
 /**
- * Normalize path to avoid 307 redirects that may drop headers.
- * - Ensures it starts with "/"
- * - Preserves query string
- * - Adds trailing slash ONLY for collection endpoints you use a lot
+ * Normalize path to avoid 307 redirects (your hook blocks redirects).
+ * Rule:
+ *  - Always start with "/"
+ *  - Preserve query string
+ *  - Strip trailing slashes by default (FastAPI often redirects on slash mismatch)
  */
 function normalizePath(path) {
-  let p = String(path || "");
+  let p = String(path || "").trim();
   if (!p.startsWith("/")) p = `/${p}`;
 
-  // Split query
   const [base, qs] = p.split("?");
   let b = base;
 
-  // ✅ Fix the most common redirect culprits in this app:
-  // FastAPI treats "/api/assignments" -> 307 -> "/api/assignments/"
-  if (b === "/api/assignments") b = "/api/assignments/";
-  if (b === "/api/master/banks") b = "/api/master/banks";
-  // (leave other endpoints alone)
+  // ✅ Strip trailing slash (except root)
+  if (b.length > 1 && b.endsWith("/")) b = b.replace(/\/+$/, "");
 
   return qs ? `${b}?${qs}` : b;
 }
@@ -44,23 +41,26 @@ function normalizePath(path) {
 export async function apiFetch(path, options = {}) {
   const user = getCurrentUser();
   const userEmail = (user?.email || "").trim();
-  const accessToken = (user?.access_token || user?.token || "").trim(); // support both keys
+  const token = (user?.token || user?.access_token || "").trim(); // support both keys
 
   const headers = new Headers(options.headers || {});
   headers.set("Accept", "application/json");
 
   // ✅ JWT first
-  if (accessToken && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${accessToken}`);
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
   }
 
-  // ✅ fallback (legacy/dev-only)
-  if (!accessToken && userEmail && !headers.has("X-User-Email")) {
+  // ✅ legacy fallback (dev-only)
+  if (!token && userEmail && !headers.has("X-User-Email")) {
     headers.set("X-User-Email", userEmail);
   }
 
   // If body exists and Content-Type not set, default to JSON
-  if (options.body && !headers.has("Content-Type")) {
+  // IMPORTANT: do NOT set Content-Type for FormData; browser must set boundary.
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  const method = String(options.method || "GET").toUpperCase();
+  if (options.body && !isFormData && !headers.has("Content-Type") && method !== "GET" && method !== "HEAD") {
     headers.set("Content-Type", "application/json");
   }
 
@@ -69,8 +69,7 @@ export async function apiFetch(path, options = {}) {
   const res = await fetch(url, {
     ...options,
     headers,
-    // ✅ important: prevent silent redirect surprises.
-    // If you *still* hit a redirect, you want to see it and fix the path.
+    // Keep follow; redirects should now not happen due to normalization.
     redirect: options.redirect || "follow",
   });
 
@@ -78,14 +77,12 @@ export async function apiFetch(path, options = {}) {
     const detail = await readErrorDetail(res);
     console.error("401 from API", normalizePath(path), {
       userEmail,
-      hasToken: Boolean(accessToken),
+      hasToken: Boolean(token),
       detail,
     });
 
-    // ✅ Clear session so UI returns to login cleanly
     clearCurrentUser();
-
-    throw new Error(detail ? `UNAUTHORIZED: ${detail}` : "UNAUTHORIZED");
+    return res;
   }
 
   return res;

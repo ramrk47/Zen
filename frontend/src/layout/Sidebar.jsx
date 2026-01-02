@@ -4,7 +4,10 @@ import { getCurrentUser } from "../auth/currentUser";
 
 function Sidebar() {
   const user = getCurrentUser();
-  const isAdmin = user?.role === "ADMIN";
+  const roleUpper = (user?.role || "").toUpperCase();
+
+  const isAdmin = roleUpper === "ADMIN";
+  const isFinance = roleUpper === "FINANCE";
 
   const sidebarStyle = {
     height: "100vh",
@@ -60,15 +63,19 @@ function Sidebar() {
           Assignments
         </NavLink>
 
-        {isAdmin && (
+        {(isAdmin || isFinance) && (
           <NavLink to="/invoices" style={navLinkStyle}>
             Invoices / Finance
           </NavLink>
         )}
 
+        <NavLink to="/account" style={navLinkStyle}>
+          Account
+        </NavLink>
+
         {isAdmin && (
-          <NavLink to="/settings" style={navLinkStyle}>
-            Settings / Admin
+          <NavLink to="/admin" style={navLinkStyle}>
+            Admin
           </NavLink>
         )}
       </nav>
